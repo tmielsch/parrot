@@ -417,13 +417,15 @@ impl ServerEngine {
             .or_else(|| self.config.models.first())
     }
 
-    fn synthesize_request(
+    /// The JSON body of one speech request. Separate from the HTTP call so
+    /// tests can print exactly what the app sends.
+    fn build_payload(
         &self,
         entry: &ModelEntry,
         text: &str,
         voice: &str,
         speed: f32,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<serde_json::Value, String> {
         let lang_code = std::env::var("PARROT_SERVER_LANG")
             .ok()
             .or_else(|| entry.force_lang_code.as_deref().and_then(nonempty))
@@ -460,7 +462,17 @@ impl ServerEngine {
             }
             None => payload["voice"] = serde_json::json!(voice),
         }
+        Ok(payload)
+    }
 
+    fn synthesize_request(
+        &self,
+        entry: &ModelEntry,
+        text: &str,
+        voice: &str,
+        speed: f32,
+    ) -> Result<Vec<u8>, String> {
+        let payload = self.build_payload(entry, text, voice, speed)?;
         let response = self
             .client
             .post(format!("{}/v1/audio/speech", self.base_url))
