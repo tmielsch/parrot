@@ -254,6 +254,11 @@ pub fn configured_voice_for(app_model_id: &str) -> Option<String> {
         .or_else(|| entry.voices.first().cloned())
 }
 
+/// Language code the daemon uses by default (for Whisper on import).
+pub fn load_server_config_lang() -> Option<String> {
+    nonempty(&load_server_config().defaults.lang_code)
+}
+
 /// Connection facts for the tray/settings layer.
 pub fn load_public_server_config() -> PublicServerConfig {
     let cfg = load_server_config();
@@ -595,7 +600,16 @@ impl SpeechEngine for ServerEngine {
         let configured = self.default_voice();
         let voice = if configured.is_empty() { voice } else { configured.as_str() };
         let wav_bytes = self.synthesize_request(&entry, text, voice, speed)?;
-        decode_wav(&wav_bytes)
+        decode_wav(&wav_bytes).map_err(|e| {
+            // The backend streams the WAV and aborts mid-body when the
+            // model fails after the header went out (e.g. Ming's 512-position
+            // limit with a very long voice sample), so the app sees a
+            // truncated file instead of an HTTP error.
+            format!(
+                "{e}. The speech server stopped mid-answer; check ~/Library/Logs/ttsd/mlx-server.log. \
+                 With a voice sample, a shorter sample usually fixes it."
+            )
+        })
     }
 }
 

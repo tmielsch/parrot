@@ -813,7 +813,11 @@ source: string | null;
 /**
  * True when the converted audio file is gone.
  */
-missing: boolean }
+missing: boolean; 
+/**
+ * Set when the import cut a long file: (original, kept) seconds.
+ */
+trimmed_from: number | null; trimmed_to: number | null }
 export type ServerStatus = { alive: boolean; host: string; port: number; models_loaded: string[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"

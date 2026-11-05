@@ -389,7 +389,7 @@
       "useSample": "Verwenden",
       "delete": "Löschen",
       "addSample": "Stimmprobe hinzufügen",
-      "addSampleDescription": "5–15 Sekunden klare Sprache, ein Sprecher, keine Musik. Die Abschrift muss Wort für Wort zur Aufnahme passen.",
+      "addSampleDescription": "5–15 Sekunden klare Sprache, ein Sprecher, keine Musik. Längere Dateien werden automatisch an einem Satzende auf etwa 8 Sekunden gekürzt, und die Abschrift wird auf die behaltenen Wörter gesetzt.",
       "chooseFile": "Datei wählen…",
       "noFile": "Keine Datei gewählt",
       "audioFiles": "Audiodateien",
@@ -397,7 +397,8 @@
       "sampleTranscript": "Genaue Abschrift der Aufnahme",
       "transcribe": "Automatisch abschreiben",
       "transcribing": "Schreibe ab…",
-      "saveSample": "Probe speichern"
+      "saveSample": "Probe speichern",
+      "sampleTrimmed": "gekürzt {{from}} s → {{to}} s"
     }
   },
   "footer": {

@@ -54,6 +54,9 @@ pub struct ServerSampleView {
     pub source: Option<String>,
     /// True when the converted audio file is gone.
     pub missing: bool,
+    /// Set when the import cut a long file: (original, kept) seconds.
+    pub trimmed_from: Option<f32>,
+    pub trimmed_to: Option<f32>,
 }
 
 /// Generation knobs of one model; None = the model's own default.
@@ -200,6 +203,8 @@ fn parse_config_view(raw: &serde_json::Value) -> ServerConfigView {
                 ref_text: str_field(def, "ref_text"),
                 source: def.get("source").and_then(|s| s.as_str()).map(String::from),
                 missing,
+                trimmed_from: trimmed_value(def, "original_seconds"),
+                trimmed_to: trimmed_value(def, "kept_seconds"),
             });
         }
     }
@@ -225,6 +230,10 @@ fn parse_config_view(raw: &serde_json::Value) -> ServerConfigView {
             .map(|v| v as f32),
         models,
     }
+}
+
+fn trimmed_value(def: &serde_json::Value, key: &str) -> Option<f32> {
+    def.get("trimmed")?.get(key)?.as_f64().map(|v| v as f32)
 }
 
 fn expand_home(raw: &str) -> String {
@@ -371,12 +380,15 @@ pub fn set_server_params(model_id: String, params: ServerParamsView) -> Result<(
 #[specta::specta]
 pub fn add_server_sample(name: String, source_path: String, ref_text: String) -> Result<ServerSampleView, String> {
     let base = control_base_url()?;
+    // Long files are cut with Whisper word timestamps on the daemon side;
+    // the first Whisper call loads the model, so allow a few minutes.
+    let language = crate::model_families::server::load_server_config_lang();
     let resp = Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?
         .post(format!("{base}/clone"))
-        .json(&serde_json::json!({ "name": name, "source_path": source_path, "ref_text": ref_text }))
+        .json(&serde_json::json!({ "name": name, "source_path": source_path, "ref_text": ref_text, "language": language }))
         .send()
         .map_err(|e| format!("ttsd control API not reachable: {e}"))?;
     let status = resp.status();
@@ -390,6 +402,8 @@ pub fn add_server_sample(name: String, source_path: String, ref_text: String) ->
         ref_text: str_field(&body, "ref_text"),
         source: body.get("source").and_then(|s| s.as_str()).map(String::from),
         missing: false,
+        trimmed_from: trimmed_value(&body, "original_seconds"),
+        trimmed_to: trimmed_value(&body, "kept_seconds"),
     })
 }
 

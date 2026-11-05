@@ -432,6 +432,14 @@ export const SpeechServerSettings: React.FC = () => {
               grouped
             >
               <div className="flex items-center gap-2">
+                {sample.trimmed_from !== null && sample.trimmed_to !== null && (
+                  <span className="text-xs text-mid-gray">
+                    {t("settings.speechServer.sampleTrimmed", {
+                      from: sample.trimmed_from.toFixed(0),
+                      to: sample.trimmed_to.toFixed(1),
+                    })}
+                  </span>
+                )}
                 {sample.missing && (
                   <span className="text-xs text-red-400">
                     {t("settings.speechServer.sampleMissing")}

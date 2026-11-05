@@ -389,7 +389,7 @@
       "useSample": "Use",
       "delete": "Delete",
       "addSample": "Add a voice sample",
-      "addSampleDescription": "5–15 seconds of clear speech, one speaker, no music. The transcript must match the recording word for word.",
+      "addSampleDescription": "5–15 seconds of clear speech, one speaker, no music. Longer files are cut automatically to about 8 seconds at a sentence end, and the transcript is set to the kept words.",
       "chooseFile": "Choose file…",
       "noFile": "No file chosen",
       "audioFiles": "Audio files",
@@ -397,7 +397,8 @@
       "sampleTranscript": "Exact transcript of the recording",
       "transcribe": "Transcribe automatically",
       "transcribing": "Transcribing…",
-      "saveSample": "Save sample"
+      "saveSample": "Save sample",
+      "sampleTrimmed": "cut {{from}} s → {{to}} s"
     }
   },
   "footer": {
