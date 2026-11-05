@@ -4,7 +4,14 @@
     "checkUpdates": "Buscar actualizaciones...",
     "copyLastText": "Copiar Último Texto",
     "unloadModel": "Descargar modelo",
-    "quit": "Salir"
+    "quit": "Salir",
+    "server": "Speech Server",
+    "serverModels": "Model",
+    "serverVoices": "Voice",
+    "serverLanguage": "Language",
+    "serverTemperature": "Temperature",
+    "serverMissingSample": "needs voice sample",
+    "serverOffline": "offline"
   },
   "sidebar": {
     "general": "General",
@@ -12,7 +19,8 @@
     "advanced": "Avanzado",
     "history": "Historial",
     "debug": "Depuración",
-    "about": "Acerca de"
+    "about": "Acerca de",
+    "speechServer": "Speech Server"
   },
   "onboarding": {
     "subtitle": "Para comenzar, elige un modelo TTS",
@@ -302,6 +310,94 @@
           "details": "Parrot es una bifurcación de Handy por CJ Pais. Gracias por construir la base que hizo posible Parrot."
         }
       }
+    },
+    "speechServer": {
+      "statusTitle": "Speech server",
+      "server": "Server",
+      "serverDescription": "The local ttsd daemon that runs the speech models. Its config lives in ~/ttsd/server.yaml.",
+      "online": "Running on {{host}}:{{port}}",
+      "offline": "Not reachable — start it with: ttsd start",
+      "reload": "Reload",
+      "voiceTitle": "Voice",
+      "model": "Model",
+      "modelDescription": "Which server model reads the selected text.",
+      "voice": "Voice",
+      "voiceDescription": "Built-in voice of the model, or one of your voice samples.",
+      "noVoices": "No usable voice",
+      "sampleVoiceLabel": "Sample: {{name}}",
+      "language": "Language",
+      "languageDescription": "Language of the text being read. Ming speaks German and English without a voice sample.",
+      "preview": "Try it",
+      "previewDescription": "Reads this sentence with the current settings, exactly as the hotkey would.",
+      "play": "Play",
+      "generationTitle": "Generation",
+      "generationDescription": "Every setting applies to the next sentence; no restart needed.",
+      "temperature": "Temperature",
+      "temperatureDescription": "Lower = calmer and more repeatable, higher = livelier but less predictable.",
+      "seed": "Seed",
+      "seedDescription": "One fixed number keeps the same rendering every time. Empty = new random noise for each sentence.",
+      "seedRandom": "Random",
+      "seedNew": "New seed",
+      "lockVoice": "Hold the voice steady",
+      "lockVoiceDescription": "Sends a fixed reference clip of the built-in voice with every sentence, so the speaker does not change between sentences. Turn off to hear the bare voice, which can sound better but may drift.",
+      "resetKnobs": "Model defaults",
+      "resetKnobsDescription": "Clears all sliders above back to the model's own values.",
+      "reset": "Reset",
+      "knobs": {
+        "cfg_scale": {
+          "label": "Guidance (cfg_scale)",
+          "description": "How strictly Ming follows the text and voice. Model default {{fallback}}."
+        },
+        "ddpm_steps": {
+          "label": "Quality steps (ddpm_steps)",
+          "description": "More steps = finer audio but slower. Model default {{fallback}}."
+        },
+        "sigma": {
+          "label": "Noise width (sigma)",
+          "description": "Variation in the sound. Model default {{fallback}}."
+        },
+        "exaggeration": {
+          "label": "Expressiveness (exaggeration)",
+          "description": "How emotional Chatterbox sounds. Model default {{fallback}}."
+        },
+        "cfg_weight": {
+          "label": "Guidance (cfg_weight)",
+          "description": "How closely Chatterbox follows the voice sample. Model default {{fallback}}."
+        },
+        "min_p": {
+          "label": "Min-p sampling",
+          "description": "Cuts unlikely sounds. Model default {{fallback}}."
+        },
+        "repetition_penalty": {
+          "label": "Repetition penalty",
+          "description": "Discourages stuck or repeated sounds. Model default {{fallback}}."
+        },
+        "top_p": {
+          "label": "Top-p",
+          "description": "Model default {{fallback}}."
+        },
+        "top_k": {
+          "label": "Top-k",
+          "description": "Model default {{fallback}}."
+        }
+      },
+      "samplesTitle": "Voice samples",
+      "samplesDescription": "Your own recordings. Ming and Chatterbox can read with any of them.",
+      "noSamples": "No voice samples yet.",
+      "noTranscript": "No transcript — cloning works best with the exact text.",
+      "sampleMissing": "file missing",
+      "useSample": "Use",
+      "delete": "Delete",
+      "addSample": "Add a voice sample",
+      "addSampleDescription": "5–15 seconds of clear speech, one speaker, no music. The transcript must match the recording word for word.",
+      "chooseFile": "Choose file…",
+      "noFile": "No file chosen",
+      "audioFiles": "Audio files",
+      "sampleName": "Name (e.g. my-voice)",
+      "sampleTranscript": "Exact transcript of the recording",
+      "transcribe": "Transcribe automatically",
+      "transcribing": "Transcribing…",
+      "saveSample": "Save sample"
     }
   },
   "footer": {

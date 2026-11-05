@@ -514,6 +514,88 @@ async reloadServer() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sets the fixed seed (None = random noise per request).
+ */
+async setServerSeed(seed: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_seed", { seed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Turns the anchor clips of built-in voices on or off.
+ */
+async setServerLockVoice(lockVoice: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_lock_voice", { lockVoice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Replaces the generation knobs of one model. Absent (None) knobs fall
+ * back to the model's own defaults, so the whole object is written.
+ */
+async setServerParams(modelId: string, params: ServerParamsView) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_params", { modelId, params }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Imports an audio file as a user voice sample (POST /clone). The daemon
+ * converts it to WAV with afconvert, so wav/mp3/m4a/aiff/flac all work.
+ */
+async addServerSample(name: string, sourcePath: string, refText: string) : Promise<Result<ServerSampleView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_server_sample", { name, sourcePath, refText }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Removes a user voice sample and its converted file.
+ */
+async removeServerSample(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_server_sample", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whisper transcript of an audio file, suggested as the sample's text.
+ * The first call loads Whisper on the daemon side (can take ~30 s).
+ */
+async transcribeServerSample(path: string, language: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_server_sample", { path, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Speaks a test sentence with the current server settings, exactly the
+ * way the hotkey would (same engine, same overlay). Switches the app to
+ * the active server model first when another engine is selected.
+ */
+async previewServerVoice(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_server_voice", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getModelStatus() : Promise<Result<ModelStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_model_status") };
@@ -698,12 +780,40 @@ missing: boolean }
 /**
  * A minimal view of the daemon config — the parts the UI needs.
  */
-export type ServerConfigView = { active_model: string | null; lang_code: string | null; temperature: number | null; models: ServerModelView[] }
+export type ServerConfigView = { active_model: string | null; lang_code: string | null; temperature: number | null; 
+/**
+ * Fixed random seed for every request; None = fresh noise each time.
+ */
+seed: number | null; 
+/**
+ * Built-in voices use their anchor clip (steady across sentences).
+ */
+lock_voice: boolean; models: ServerModelView[]; 
+/**
+ * User voice samples, selectable as voice "clone:<name>".
+ */
+samples: ServerSampleView[] }
 export type ServerModelView = { id: string; repo: string; alias: string; engine_kind: string; voices: string[]; default_voice: string | null; languages: string[]; temperature: number; 
 /**
  * Clone reference names with a human label for the menu.
  */
-clones: ServerCloneView[] }
+clones: ServerCloneView[]; params: ServerParamsView }
+/**
+ * Generation knobs of one model; None = the model's own default.
+ */
+export type ServerParamsView = { top_p: number | null; top_k: number | null; repetition_penalty: number | null; cfg_scale: number | null; ddpm_steps: number | null; sigma: number | null; exaggeration: number | null; cfg_weight: number | null; min_p: number | null }
+/**
+ * One user voice sample (global "clones" section of the daemon config).
+ */
+export type ServerSampleView = { name: string; ref_audio: string; ref_text: string; 
+/**
+ * Original file the sample was imported from.
+ */
+source: string | null; 
+/**
+ * True when the converted audio file is gone.
+ */
+missing: boolean }
 export type ServerStatus = { alive: boolean; host: string; port: number; models_loaded: string[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"

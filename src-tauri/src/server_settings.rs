@@ -35,7 +35,39 @@ pub struct ServerConfigView {
     pub active_model: Option<String>,
     pub lang_code: Option<String>,
     pub temperature: Option<f32>,
+    /// Fixed random seed for every request; None = fresh noise each time.
+    pub seed: Option<i64>,
+    /// Built-in voices use their anchor clip (steady across sentences).
+    pub lock_voice: bool,
     pub models: Vec<ServerModelView>,
+    /// User voice samples, selectable as voice "clone:<name>".
+    pub samples: Vec<ServerSampleView>,
+}
+
+/// One user voice sample (global "clones" section of the daemon config).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default)]
+pub struct ServerSampleView {
+    pub name: String,
+    pub ref_audio: String,
+    pub ref_text: String,
+    /// Original file the sample was imported from.
+    pub source: Option<String>,
+    /// True when the converted audio file is gone.
+    pub missing: bool,
+}
+
+/// Generation knobs of one model; None = the model's own default.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default)]
+pub struct ServerParamsView {
+    pub top_p: Option<f32>,
+    pub top_k: Option<i64>,
+    pub repetition_penalty: Option<f32>,
+    pub cfg_scale: Option<f32>,
+    pub ddpm_steps: Option<i64>,
+    pub sigma: Option<f32>,
+    pub exaggeration: Option<f32>,
+    pub cfg_weight: Option<f32>,
+    pub min_p: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default)]
@@ -50,6 +82,7 @@ pub struct ServerModelView {
     pub temperature: f32,
     /// Clone reference names with a human label for the menu.
     pub clones: Vec<ServerCloneView>,
+    pub params: ServerParamsView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default)]
@@ -148,10 +181,36 @@ fn parse_config_view(raw: &serde_json::Value) -> ServerConfigView {
                     .map(|v| v as f32)
                     .unwrap_or(0.2),
                 clones,
+                params: entry
+                    .get("params")
+                    .cloned()
+                    .and_then(|p| serde_json::from_value(p).ok())
+                    .unwrap_or_default(),
             });
         }
     }
+    let mut samples = Vec::new();
+    if let Some(map) = raw.get("clones").and_then(|c| c.as_object()) {
+        for (name, def) in map {
+            let ref_audio = str_field(def, "ref_audio");
+            let missing = !std::path::Path::new(&expand_home(&ref_audio)).is_file();
+            samples.push(ServerSampleView {
+                name: name.clone(),
+                ref_audio,
+                ref_text: str_field(def, "ref_text"),
+                source: def.get("source").and_then(|s| s.as_str()).map(String::from),
+                missing,
+            });
+        }
+    }
+    samples.sort_by(|a, b| a.name.cmp(&b.name));
     ServerConfigView {
+        seed: defaults.get("seed").and_then(|v| v.as_i64()),
+        lock_voice: defaults
+            .get("lock_voice")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        samples,
         active_model: raw
             .get("active_model")
             .and_then(|v| v.as_str())
@@ -165,6 +224,13 @@ fn parse_config_view(raw: &serde_json::Value) -> ServerConfigView {
             .and_then(|v| v.as_f64())
             .map(|v| v as f32),
         models,
+    }
+}
+
+fn expand_home(raw: &str) -> String {
+    match raw.strip_prefix("~/") {
+        Some(rest) => format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest),
+        None => raw.to_string(),
     }
 }
 
@@ -270,6 +336,113 @@ fn post_json(path: &str, body: serde_json::Value) -> Result<(), String> {
 #[specta::specta]
 pub fn set_server_temperature(temperature: f32) -> Result<(), String> {
     patch_config(serde_json::json!({ "defaults": { "temperature": temperature } }))
+}
+
+/// Sets the fixed seed (None = random noise per request).
+#[tauri::command]
+#[specta::specta]
+pub fn set_server_seed(seed: Option<i64>) -> Result<(), String> {
+    patch_config(serde_json::json!({ "defaults": { "seed": seed } }))
+}
+
+/// Turns the anchor clips of built-in voices on or off.
+#[tauri::command]
+#[specta::specta]
+pub fn set_server_lock_voice(lock_voice: bool) -> Result<(), String> {
+    patch_config(serde_json::json!({ "defaults": { "lock_voice": lock_voice } }))
+}
+
+/// Replaces the generation knobs of one model. Absent (None) knobs fall
+/// back to the model's own defaults, so the whole object is written.
+#[tauri::command]
+#[specta::specta]
+pub fn set_server_params(model_id: String, params: ServerParamsView) -> Result<(), String> {
+    let model_id = model_id.trim_start_matches(MODEL_ID_PREFIX).trim().to_string();
+    let knobs = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    // POST /model deep-merges dicts, so a cleared knob (null) must be sent
+    // explicitly; serde writes None as null here, which overwrites it.
+    post_json("/model", serde_json::json!({ "id": model_id, "params": knobs }))?;
+    post_json("/reload", serde_json::json!({}))
+}
+
+/// Imports an audio file as a user voice sample (POST /clone). The daemon
+/// converts it to WAV with afconvert, so wav/mp3/m4a/aiff/flac all work.
+#[tauri::command]
+#[specta::specta]
+pub fn add_server_sample(name: String, source_path: String, ref_text: String) -> Result<ServerSampleView, String> {
+    let base = control_base_url()?;
+    let resp = Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{base}/clone"))
+        .json(&serde_json::json!({ "name": name, "source_path": source_path, "ref_text": ref_text }))
+        .send()
+        .map_err(|e| format!("ttsd control API not reachable: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().map_err(|e| format!("bad response: {e}"))?;
+    if !status.is_success() {
+        return Err(body.get("error").and_then(|e| e.as_str()).unwrap_or("import failed").to_string());
+    }
+    Ok(ServerSampleView {
+        name: str_field(&body, "name"),
+        ref_audio: str_field(&body, "ref_audio"),
+        ref_text: str_field(&body, "ref_text"),
+        source: body.get("source").and_then(|s| s.as_str()).map(String::from),
+        missing: false,
+    })
+}
+
+/// Removes a user voice sample and its converted file.
+#[tauri::command]
+#[specta::specta]
+pub fn remove_server_sample(name: String) -> Result<(), String> {
+    post_json("/clone/delete", serde_json::json!({ "name": name }))
+}
+
+/// Whisper transcript of an audio file, suggested as the sample's text.
+/// The first call loads Whisper on the daemon side (can take ~30 s).
+#[tauri::command]
+#[specta::specta]
+pub fn transcribe_server_sample(path: String, language: Option<String>) -> Result<String, String> {
+    let base = control_base_url()?;
+    let resp = Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{base}/transcribe"))
+        .json(&serde_json::json!({ "path": path, "language": language }))
+        .send()
+        .map_err(|e| format!("ttsd control API not reachable: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().map_err(|e| format!("bad response: {e}"))?;
+    if !status.is_success() {
+        return Err(body.get("error").and_then(|e| e.as_str()).unwrap_or("transcription failed").to_string());
+    }
+    Ok(str_field(&body, "text"))
+}
+
+/// Speaks a test sentence with the current server settings, exactly the
+/// way the hotkey would (same engine, same overlay). Switches the app to
+/// the active server model first when another engine is selected.
+#[tauri::command]
+#[specta::specta]
+pub fn preview_server_voice(app: AppHandle, text: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TTSManager>>();
+    let selected = get_settings(&app).selected_model;
+    if !selected.starts_with(MODEL_ID_PREFIX) {
+        return Err("select a Speech Server model first".into());
+    }
+    if !tts.is_model_loaded() && !tts.is_model_loading() {
+        tts.initiate_model_load();
+    }
+    let Some(request_id) = tts.begin_request_or_toggle_stop() else {
+        // A request was running; the call above stopped it.
+        return Ok(());
+    };
+    // speak() runs synthesis and playback on its own thread.
+    tts.speak(text, request_id);
+    Ok(())
 }
 
 /// Forces a daemon reload (Settings: "Apply"/tray).

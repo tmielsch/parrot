@@ -1,6 +1,6 @@
 import React from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Cpu, Lightbulb } from "lucide-react";
+import { AudioLines, Cog, FlaskConical, History, Info, Cpu, Lightbulb } from "lucide-react";
 import ParrotTextLogo from "./icons/ParrotTextLogo";
 import ParrotIcon from "./icons/ParrotIcon";
 import { useSettings } from "../hooks/useSettings";
@@ -13,6 +13,7 @@ import {
   DebugSettings,
   AboutSettings,
   ModelsSettings,
+  SpeechServerSettings,
 } from "./settings";
 
 const MAC_SYMBOLS: Record<string, string> = {
@@ -71,6 +72,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.models",
     icon: Cpu,
     component: ModelsSettings,
+    enabled: () => true,
+  },
+  speechServer: {
+    labelKey: "sidebar.speechServer",
+    icon: AudioLines,
+    component: SpeechServerSettings,
     enabled: () => true,
   },
   advanced: {

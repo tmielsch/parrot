@@ -19,7 +19,8 @@
     "advanced": "Erweitert",
     "history": "Verlauf",
     "debug": "Debug",
-    "about": "Info"
+    "about": "Info",
+    "speechServer": "Sprachserver"
   },
   "onboarding": {
     "subtitle": "Wähle ein Transkriptionsmodell, um loszulegen",
@@ -309,6 +310,94 @@
           "details": "Parrot is a fork of Handy by CJ Pais. Thanks for building the foundation that made Parrot possible."
         }
       }
+    },
+    "speechServer": {
+      "statusTitle": "Sprachserver",
+      "server": "Server",
+      "serverDescription": "Der lokale Dienst ttsd, der die Sprachmodelle ausführt. Seine Konfiguration liegt in ~/ttsd/server.yaml.",
+      "online": "Läuft auf {{host}}:{{port}}",
+      "offline": "Nicht erreichbar — starten mit: ttsd start",
+      "reload": "Neu laden",
+      "voiceTitle": "Stimme",
+      "model": "Modell",
+      "modelDescription": "Welches Servermodell den markierten Text vorliest.",
+      "voice": "Stimme",
+      "voiceDescription": "Eingebaute Stimme des Modells oder eine deiner Stimmproben.",
+      "noVoices": "Keine nutzbare Stimme",
+      "sampleVoiceLabel": "Probe: {{name}}",
+      "language": "Sprache",
+      "languageDescription": "Sprache des vorgelesenen Textes. Ming spricht Deutsch und Englisch ohne Stimmprobe.",
+      "preview": "Ausprobieren",
+      "previewDescription": "Liest diesen Satz mit den aktuellen Einstellungen vor, genau wie der Hotkey.",
+      "play": "Abspielen",
+      "generationTitle": "Erzeugung",
+      "generationDescription": "Jede Einstellung gilt ab dem nächsten Satz, ohne Neustart.",
+      "temperature": "Temperatur",
+      "temperatureDescription": "Niedriger = ruhiger und wiederholbarer, höher = lebendiger, aber weniger vorhersehbar.",
+      "seed": "Seed",
+      "seedDescription": "Eine feste Zahl ergibt jedes Mal dieselbe Fassung. Leer = für jeden Satz neues Zufallsrauschen.",
+      "seedRandom": "Zufällig",
+      "seedNew": "Neuer Seed",
+      "lockVoice": "Stimme festhalten",
+      "lockVoiceDescription": "Schickt mit jedem Satz eine feste Referenzaufnahme der eingebauten Stimme, damit der Sprecher zwischen den Sätzen nicht wechselt. Aus = die reine Stimme, die besser klingen kann, aber wandern darf.",
+      "resetKnobs": "Modell-Standard",
+      "resetKnobsDescription": "Setzt alle Regler oben auf die eigenen Werte des Modells zurück.",
+      "reset": "Zurücksetzen",
+      "knobs": {
+        "cfg_scale": {
+          "label": "Führung (cfg_scale)",
+          "description": "Wie streng Ming Text und Stimme folgt. Modell-Standard {{fallback}}."
+        },
+        "ddpm_steps": {
+          "label": "Qualitätsschritte (ddpm_steps)",
+          "description": "Mehr Schritte = feinerer Klang, aber langsamer. Modell-Standard {{fallback}}."
+        },
+        "sigma": {
+          "label": "Rauschbreite (sigma)",
+          "description": "Variation im Klang. Modell-Standard {{fallback}}."
+        },
+        "exaggeration": {
+          "label": "Ausdruck (exaggeration)",
+          "description": "Wie emotional Chatterbox klingt. Modell-Standard {{fallback}}."
+        },
+        "cfg_weight": {
+          "label": "Führung (cfg_weight)",
+          "description": "Wie eng Chatterbox der Stimmprobe folgt. Modell-Standard {{fallback}}."
+        },
+        "min_p": {
+          "label": "Min-p-Sampling",
+          "description": "Schneidet unwahrscheinliche Laute ab. Modell-Standard {{fallback}}."
+        },
+        "repetition_penalty": {
+          "label": "Wiederholungsstrafe",
+          "description": "Verhindert hängende oder wiederholte Laute. Modell-Standard {{fallback}}."
+        },
+        "top_p": {
+          "label": "Top-p",
+          "description": "Modell-Standard {{fallback}}."
+        },
+        "top_k": {
+          "label": "Top-k",
+          "description": "Modell-Standard {{fallback}}."
+        }
+      },
+      "samplesTitle": "Stimmproben",
+      "samplesDescription": "Deine eigenen Aufnahmen. Ming und Chatterbox können mit jeder davon vorlesen.",
+      "noSamples": "Noch keine Stimmproben.",
+      "noTranscript": "Keine Abschrift — das Klonen klappt am besten mit dem genauen Text.",
+      "sampleMissing": "Datei fehlt",
+      "useSample": "Verwenden",
+      "delete": "Löschen",
+      "addSample": "Stimmprobe hinzufügen",
+      "addSampleDescription": "5–15 Sekunden klare Sprache, ein Sprecher, keine Musik. Die Abschrift muss Wort für Wort zur Aufnahme passen.",
+      "chooseFile": "Datei wählen…",
+      "noFile": "Keine Datei gewählt",
+      "audioFiles": "Audiodateien",
+      "sampleName": "Name (z. B. meine-stimme)",
+      "sampleTranscript": "Genaue Abschrift der Aufnahme",
+      "transcribe": "Automatisch abschreiben",
+      "transcribing": "Schreibe ab…",
+      "saveSample": "Probe speichern"
     }
   },
   "footer": {

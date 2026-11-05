@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use hound::{SampleFormat, WavReader};
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tts_rs::SynthesisResult;
 
 use super::{HfRepo, LoadContext, ModelFamily, SpeechEngine};
@@ -59,7 +59,14 @@ pub struct ServerConfig {
     defaults: DefaultsSection,
     #[serde(default)]
     models: Vec<ModelEntry>,
+    /// User voice samples, usable by every model that can clone (Ming
+    /// and Chatterbox). Selected as voice "clone:<name>".
+    #[serde(default)]
+    clones: HashMap<String, CloneRef>,
 }
+
+/// Voice names that mean "use the user voice sample <name>".
+pub const CLONE_VOICE_PREFIX: &str = "clone:";
 
 #[derive(Debug, Clone, Deserialize)]
 struct ServerSection {
@@ -101,6 +108,11 @@ struct DefaultsSection {
     /// with a voice sample). None = server picks fresh noise each time.
     #[serde(default)]
     seed: Option<i64>,
+    /// Use the anchor clip of a built-in voice instead of its bare name.
+    /// Steadier across sentences, but the anchor fixes one rendering of
+    /// the voice, which may sound worse than the bare voice.
+    #[serde(default = "default_true")]
+    lock_voice: bool,
 }
 
 impl Default for DefaultsSection {
@@ -109,8 +121,43 @@ impl Default for DefaultsSection {
             lang_code: default_lang(),
             temperature: None,
             seed: None,
+            lock_voice: true,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Generation knobs forwarded to the backend (`~/ttsd/backend.py`). Every
+/// field is optional; an absent field leaves the model's own default.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct GenerationParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f32>,
+    /// Ming: classifier-free guidance (model default 2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg_scale: Option<f32>,
+    /// Ming: flow-matching steps (model default 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ddpm_steps: Option<i64>,
+    /// Ming: sampling noise width (model default 0.25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigma: Option<f32>,
+    /// Chatterbox: emotion exaggeration (model default 0.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exaggeration: Option<f32>,
+    /// Chatterbox: guidance weight (model default 0.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cfg_weight: Option<f32>,
+    /// Chatterbox: min-p sampling (model default 0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,6 +182,9 @@ pub struct ModelEntry {
     /// sentence so the speaker stays the same across a whole text.
     #[serde(default)]
     pub anchors: HashMap<String, CloneRef>,
+    /// Per-model generation knobs, edited in the settings window.
+    #[serde(default)]
+    pub params: GenerationParams,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -384,40 +434,19 @@ impl ServerEngine {
         if let Some(seed) = self.config.defaults.seed {
             payload["seed"] = serde_json::json!(seed);
         }
-
-        let anchor = entry
-            .anchors
-            .get(voice)
-            .filter(|a| PathBuf::from(expand_ref_path(&a.ref_audio)).exists());
-
-        if let Some(anchor) = anchor {
-            // Built-in voice with an anchor clip: clone the anchor instead
-            // of asking for the bare voice name, so every sentence starts
-            // from the same speaker.
-            payload["voice"] = serde_json::Value::Null;
-            payload["ref_audio"] = serde_json::json!(expand_ref_path(&anchor.ref_audio));
-            payload["ref_text"] = serde_json::json!(anchor.ref_text);
-        } else if entry.engine_kind == "chatterbox" {
-            let clone = entry
-                .clones
-                .get(voice)
-                .or_else(|| entry.clones.values().find(|c| !c.placeholder))
-                .ok_or_else(|| {
-                    format!("voice '{voice}' needs a configured clone reference")
-                })?;
-            if clone.placeholder
-                || !PathBuf::from(expand_ref_path(&clone.ref_audio)).exists()
-            {
-                return Err(format!(
-                    "clone reference '{}' is missing — record it first",
-                    clone.ref_audio
-                ));
+        if let Ok(serde_json::Value::Object(knobs)) = serde_json::to_value(&entry.params) {
+            for (key, value) in knobs {
+                payload[key] = value;
             }
-            payload["voice"] = serde_json::Value::Null;
-            payload["ref_audio"] = serde_json::json!(expand_ref_path(&clone.ref_audio));
-            payload["ref_text"] = serde_json::json!(clone.ref_text);
-        } else {
-            payload["voice"] = serde_json::json!(voice);
+        }
+
+        match self.resolve_reference(entry, voice)? {
+            Some(reference) => {
+                payload["voice"] = serde_json::Value::Null;
+                payload["ref_audio"] = serde_json::json!(expand_ref_path(&reference.ref_audio));
+                payload["ref_text"] = serde_json::json!(reference.ref_text);
+            }
+            None => payload["voice"] = serde_json::json!(voice),
         }
 
         let response = self
@@ -438,6 +467,67 @@ impl ServerEngine {
     }
 }
 
+impl ServerEngine {
+    /// Decides which reference clip (if any) goes with a request:
+    ///
+    /// 1. `clone:<name>` -> the user voice sample `clones[name]`.
+    /// 2. Chatterbox -> the model's own clone `voice`, else the first
+    ///    usable user sample (Chatterbox cannot speak without one).
+    /// 3. A built-in voice with `lock_voice` on and an anchor clip on
+    ///    disk -> the anchor (steady speaker across sentences).
+    /// 4. Otherwise none: the bare voice name is sent.
+    fn resolve_reference(&self, entry: &ModelEntry, voice: &str) -> Result<Option<CloneRef>, String> {
+        if let Some(name) = voice.strip_prefix(CLONE_VOICE_PREFIX) {
+            let clone = self
+                .config
+                .clones
+                .get(name)
+                .ok_or_else(|| format!("voice sample '{name}' is not configured"))?;
+            return usable_clone(name, clone).map(Some);
+        }
+
+        if entry.engine_kind == "chatterbox" {
+            if let Some(clone) = entry.clones.get(voice) {
+                return usable_clone(voice, clone).map(Some);
+            }
+            let fallback = self
+                .config
+                .clones
+                .iter()
+                .find(|(name, clone)| usable_clone(name, clone).is_ok());
+            return match fallback {
+                Some((_, clone)) => Ok(Some(clone.clone())),
+                None => Err(format!(
+                    "{} needs a voice sample: add one in Settings > Speech Server",
+                    entry.alias
+                )),
+            };
+        }
+
+        if self.config.defaults.lock_voice {
+            if let Some(anchor) = entry.anchors.get(voice) {
+                if usable_clone(voice, anchor).is_ok() {
+                    return Ok(Some(anchor.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// A clone reference is usable when it is not a placeholder and its
+/// audio file exists. The error text is shown to the user.
+fn usable_clone(name: &str, clone: &CloneRef) -> Result<CloneRef, String> {
+    if clone.placeholder || clone.ref_audio.trim().is_empty() {
+        return Err(format!("voice sample '{name}' has no audio file yet"));
+    }
+    let path = expand_ref_path(&clone.ref_audio);
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("voice sample '{name}' is missing: {path}"));
+    }
+    Ok(clone.clone())
+}
+
 fn nonempty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -449,11 +539,20 @@ fn nonempty(s: &str) -> Option<String> {
 
 impl SpeechEngine for ServerEngine {
     fn list_voices(&self) -> Vec<String> {
-        match self.active_entry() {
+        let mut voices = match self.active_entry() {
             Some(entry) if !entry.voices.is_empty() => entry.voices.clone(),
             Some(entry) => entry.clones.keys().cloned().collect(),
             None => Vec::new(),
-        }
+        };
+        let mut samples: Vec<String> = self
+            .config
+            .clones
+            .keys()
+            .map(|name| format!("{CLONE_VOICE_PREFIX}{name}"))
+            .collect();
+        samples.sort();
+        voices.extend(samples);
+        voices
     }
 
     fn default_voice(&self) -> String {

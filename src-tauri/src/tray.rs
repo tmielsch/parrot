@@ -254,6 +254,13 @@ fn build_server_menu(
                 voices.push(clone.name.clone());
             }
         }
+        // User voice samples work with every model that clones.
+        for sample in config.samples.iter().filter(|s| !s.missing) {
+            let name = format!("{}{}", crate::model_families::server::CLONE_VOICE_PREFIX, sample.name);
+            if !voices.contains(&name) {
+                voices.push(name);
+            }
+        }
         for voice in voices {
             let missing = model
                 .clones
