@@ -10,6 +10,7 @@ mod managers;
 mod model_families;
 mod overlay;
 mod settings;
+mod server_settings;
 mod shortcut;
 mod signal_handle;
 mod text_normalization;
@@ -241,6 +242,48 @@ fn initialize_core_logic(
             "quit" => {
                 app.exit(0);
             }
+            id if id.starts_with("server:model:") => {
+                let model = id.trim_start_matches("server:model:").to_string();
+                if let Err(e) = server_settings::set_server_model(app.clone(), model) {
+                    log::error!("Failed to switch server model: {}", e);
+                }
+                tray::update_tray_menu(app, None);
+            }
+            id if id.starts_with("server:voice:") => {
+                // "server:voice:<model id>:<voice>" — the model id is in
+                // the menu id so the voice lands on the model whose
+                // submenu was open, not on whatever the app has selected.
+                let rest = id.trim_start_matches("server:voice:");
+                if let Some((model, voice)) = rest.split_once(':') {
+                    if let Err(e) =
+                        server_settings::set_server_voice(model.to_string(), voice.to_string())
+                    {
+                        log::error!("Failed to switch server voice: {}", e);
+                    }
+                }
+                tray::update_tray_menu(app, None);
+            }
+            id if id.starts_with("server:lang:") => {
+                let lang = id.trim_start_matches("server:lang:").to_string();
+                if let Err(e) = server_settings::set_server_language(lang) {
+                    log::error!("Failed to switch server language: {}", e);
+                }
+                tray::update_tray_menu(app, None);
+            }
+            id if id.starts_with("server:temp:") => {
+                let raw = id.trim_start_matches("server:temp:");
+                match raw.parse::<f32>() {
+                    Ok(temp) => {
+                        if let Err(e) = server_settings::set_server_temperature(temp) {
+                            log::error!("Failed to switch server temperature: {}", e);
+                        }
+                    }
+                    Err(_) => {
+                        log::warn!("Ignoring malformed temperature id: {}", id);
+                    }
+                }
+                tray::update_tray_menu(app, None);
+            }
             _ => {}
         })
         .build(app_handle)
@@ -349,6 +392,13 @@ pub fn run() {
         commands::models::has_any_models_or_downloads,
         commands::models::refresh_model_catalog,
         commands::models::add_huggingface_model,
+        server_settings::get_server_status,
+        server_settings::get_server_config,
+        server_settings::set_server_model,
+        server_settings::set_server_voice,
+        server_settings::set_server_language,
+        server_settings::set_server_temperature,
+        server_settings::reload_server,
         commands::get_model_status,
         commands::preload_tts_model,
         commands::toggle_tts_pause,
@@ -367,14 +417,17 @@ pub fn run() {
         helpers::clamshell::is_laptop,
     ]);
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
-    specta_builder
-        .export(
-            specta_typescript::Typescript::default()
-                .bigint(specta_typescript::BigIntExportBehavior::Number),
-            "../src/bindings.ts",
-        )
-        .expect("Failed to export typescript bindings");
+    // Only export on non-release builds. A debug bundle installed in
+    // /Applications cannot write into the source tree; that must not
+    // stop the app from starting, so a failed export is only logged.
+    #[cfg(debug_assertions)]
+    if let Err(e) = specta_builder.export(
+        specta_typescript::Typescript::default()
+            .bigint(specta_typescript::BigIntExportBehavior::Number),
+        "../src/bindings.ts",
+    ) {
+        eprintln!("Skipping TypeScript bindings export: {e:?}");
+    }
 
     let builder = tauri::Builder::default()
         .device_event_filter(tauri::DeviceEventFilter::Always)

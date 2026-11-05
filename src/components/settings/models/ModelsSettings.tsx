@@ -8,7 +8,11 @@ import { useModelStore } from "@/stores/modelStore";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
 import { commands, type ModelInfo } from "@/bindings";
 
-const SUPPORTED_ENGINE_TYPES: ModelInfo["engine_type"][] = ["Kokoro", "Piper"];
+const SUPPORTED_ENGINE_TYPES: ModelInfo["engine_type"][] = [
+  "Kokoro",
+  "Piper",
+  "Server",
+];
 
 const isSupportedModel = (model: ModelInfo): boolean => {
   return SUPPORTED_ENGINE_TYPES.includes(model.engine_type);

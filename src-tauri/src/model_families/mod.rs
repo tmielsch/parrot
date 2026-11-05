@@ -7,6 +7,7 @@
 
 mod kokoro;
 mod piper;
+pub mod server;
 
 use std::path::{Path, PathBuf};
 
@@ -89,7 +90,7 @@ pub trait ModelFamily: Sync {
 }
 
 /// Registered families, in detection priority order.
-pub static FAMILIES: &[&dyn ModelFamily] = &[&piper::Piper, &kokoro::Kokoro];
+pub static FAMILIES: &[&dyn ModelFamily] = &[&piper::Piper, &kokoro::Kokoro, &server::Server];
 
 pub fn family_for(engine_type: &EngineType) -> &'static dyn ModelFamily {
     *FAMILIES
@@ -119,7 +120,11 @@ mod tests {
 
     #[test]
     fn every_engine_type_has_a_family() {
-        for engine_type in [EngineType::Kokoro, EngineType::Piper] {
+        for engine_type in [
+            EngineType::Kokoro,
+            EngineType::Piper,
+            EngineType::Server,
+        ] {
             assert_eq!(family_for(&engine_type).engine_type(), engine_type);
         }
     }

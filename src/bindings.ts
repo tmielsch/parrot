@@ -346,22 +346,6 @@ async downloadModel(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async refreshModelCatalog() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("refresh_model_catalog") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async addHuggingfaceModel(repo: string) : Promise<Result<ModelInfo[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("add_huggingface_model", { repo }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteModel(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId }) };
@@ -421,6 +405,110 @@ async hasAnyModelsAvailable() : Promise<Result<boolean, string>> {
 async hasAnyModelsOrDownloads() : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("has_any_models_or_downloads") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async refreshModelCatalog() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("refresh_model_catalog") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addHuggingfaceModel(repo: string) : Promise<Result<ModelInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_huggingface_model", { repo }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Reads the daemon status (GET /status). Returns an offline marker
+ * instead of an error so the tray can show "offline" calmly.
+ */
+async getServerStatus() : Promise<Result<ServerStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_server_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Reads the daemon config as a UI-friendly view (GET /config).
+ */
+async getServerConfig() : Promise<Result<ServerConfigView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_server_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Switches the active server model (tray: "server:model:<id>").
+ * 
+ * Writes `active_model` to the daemon config and makes the app select
+ * the matching `server--<id>` model, swapping the loaded engine the same
+ * way the Models screen does (`commands::models::set_active_model`).
+ */
+async setServerModel(modelId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_model", { modelId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets the voice of one server model (tray: "server:voice:<name>").
+ * 
+ * Only that model's `default_voice` changes (POST /model keeps its other
+ * fields, e.g. clone references). The server engine reads the voice from
+ * the daemon config on every sentence, so no app setting is touched.
+ */
+async setServerVoice(modelId: string, voice: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_voice", { modelId, voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets the language code sent with every request (tray: "server:lang:<code>").
+ * Stored only in the daemon config; Parrot's own `selected_language`
+ * stays untouched so Kokoro/Piper keep their settings.
+ */
+async setServerLanguage(langCode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_language", { langCode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sets the default temperature (tray: "temp:<value>").
+ */
+async setServerTemperature(temperature: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_server_temperature", { temperature }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forces a daemon reload (Settings: "Apply"/tray).
+ */
+async reloadServer() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reload_server") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -559,7 +647,11 @@ export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type CustomSounds = { start: boolean; stop: boolean }
-export type EngineType = "Kokoro" | "Piper"
+export type EngineType = "Kokoro" | "Piper" | 
+/**
+ * Models served by a local OpenAI-compatible speech server (ttsd).
+ */
+"Server"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string }
 export type HistoryRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 /**
@@ -598,6 +690,21 @@ components?: ModelComponent[] }
 export type ModelStatus = { model_id: string; model_name: string; model_description: string; accuracy_score: number; speed_score: number; is_recommended: boolean; model_dir: string; model_files_present: boolean; model_loaded: boolean }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_5"
 export type OverlayPosition = "none" | "top" | "bottom"
+export type ServerCloneView = { name: string; 
+/**
+ * True when the reference file is missing (menu shows it greyed).
+ */
+missing: boolean }
+/**
+ * A minimal view of the daemon config — the parts the UI needs.
+ */
+export type ServerConfigView = { active_model: string | null; lang_code: string | null; temperature: number | null; models: ServerModelView[] }
+export type ServerModelView = { id: string; repo: string; alias: string; engine_kind: string; voices: string[]; default_voice: string | null; languages: string[]; temperature: number; 
+/**
+ * Clone reference names with a human label for the menu.
+ */
+clones: ServerCloneView[] }
+export type ServerStatus = { alive: boolean; host: string; port: number; models_loaded: string[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
 

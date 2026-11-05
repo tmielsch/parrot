@@ -13,7 +13,15 @@ type OverlayState = "processing" | "speaking";
 interface OverlayPayload {
   state: OverlayState;
   text?: string;
+  model?: string | null;
 }
+
+// Relative height of each bar for a given level: the middle bar follows
+// the level fully, the outer bars a little less, so the group reads as a
+// small spectrum rather than five identical blocks.
+const BAR_WEIGHTS = [0.55, 0.8, 1, 0.8, 0.55];
+const BAR_MIN_PX = 4;
+const BAR_MAX_PX = 20;
 
 const SpeakingOverlay: React.FC = () => {
   const { t } = useTranslation();
@@ -23,6 +31,10 @@ const SpeakingOverlay: React.FC = () => {
   const [isTogglingPause, setIsTogglingPause] = useState(false);
   const [showCloseButton, setShowCloseButton] = useState<boolean>(true);
   const [spokenText, setSpokenText] = useState<string>("");
+  const [modelLabel, setModelLabel] = useState<string>("");
+  // Live audio level (0..1) from the backend; null until the first value
+  // arrives, in which case the bars keep their decorative animation.
+  const [level, setLevel] = useState<number | null>(null);
   // Suppresses size transitions when the overlay reappears after being
   // hidden, so it snaps to the correct size instantly instead of animating
   // from the previous state's dimensions.
@@ -69,6 +81,7 @@ const SpeakingOverlay: React.FC = () => {
         }
 
         const payload = event.payload as OverlayPayload;
+        setModelLabel(payload.model ?? "");
 
         if (payload.state === "speaking") {
           if (payload.text) {
@@ -76,6 +89,7 @@ const SpeakingOverlay: React.FC = () => {
           }
         } else {
           setSpokenText("");
+          setLevel(null);
           setSpeakingPaused(false);
           setIsTogglingPause(false);
         }
@@ -105,6 +119,10 @@ const SpeakingOverlay: React.FC = () => {
         setSpokenText(event.payload);
       });
 
+      const unlistenLevel = await listen<number>("overlay-level", (event) => {
+        setLevel(event.payload);
+      });
+
       const unlistenPauseState = await listen<boolean>(
         "tts-pause-state",
         (event) => {
@@ -116,6 +134,7 @@ const SpeakingOverlay: React.FC = () => {
         unlistenShow();
         unlistenHide();
         unlistenText();
+        unlistenLevel();
         unlistenPauseState();
       };
     };
@@ -149,7 +168,7 @@ const SpeakingOverlay: React.FC = () => {
     <div
       ref={overlayRef}
       dir={direction}
-      className={`speaking-overlay ${state}-state ${isVisible ? "fade-in" : ""} ${speakingPaused ? "paused" : ""} ${noTransition ? "no-transition" : ""}`}
+      className={`speaking-overlay ${state}-state ${modelLabel ? "has-model" : ""} ${isVisible ? "fade-in" : ""} ${speakingPaused ? "paused" : ""} ${noTransition ? "no-transition" : ""}`}
     >
       {showCloseButton && (
         <button
@@ -171,6 +190,7 @@ const SpeakingOverlay: React.FC = () => {
           <div className="status-text">
             {t("overlay.processing", { defaultValue: "Processing..." })}
           </div>
+          {modelLabel && <div className="model-label">{modelLabel}</div>}
         </div>
       </div>
 
@@ -179,15 +199,24 @@ const SpeakingOverlay: React.FC = () => {
       >
         <div className="speaking-content">
           <div className="speaking-text-section">
+            {modelLabel && <div className="model-label">{modelLabel}</div>}
             <span className="speaking-text">{spokenText}</span>
           </div>
           <div className="speaking-controls">
-            <div className="waveform-bars">
-              <div className="waveform-bar" />
-              <div className="waveform-bar" />
-              <div className="waveform-bar" />
-              <div className="waveform-bar" />
-              <div className="waveform-bar" />
+            <div className={`waveform-bars ${level !== null ? "live" : ""}`}>
+              {BAR_WEIGHTS.map((weight, i) => (
+                <div
+                  key={i}
+                  className="waveform-bar"
+                  style={
+                    level !== null
+                      ? {
+                          height: `${BAR_MIN_PX + (BAR_MAX_PX - BAR_MIN_PX) * Math.min(1, level * weight)}px`,
+                        }
+                      : undefined
+                  }
+                />
+              ))}
             </div>
             <button
               type="button"

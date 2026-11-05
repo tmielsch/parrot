@@ -22,6 +22,8 @@ use tauri::{AppHandle, Emitter, Manager};
 pub enum EngineType {
     Kokoro,
     Piper,
+    /// Models served by a local OpenAI-compatible speech server (ttsd).
+    Server,
 }
 
 const HF_BASE_URL: &str = "https://huggingface.co";
@@ -135,6 +137,25 @@ impl ModelManager {
 
         for model in load_cached_huggingface_models(&models_dir) {
             available_models.entry(model.id.clone()).or_insert(model);
+        }
+
+        // Server models from the ttsd daemon config (~ttsd/server.yaml).
+        // Each gets an empty directory under models/ so that
+        // update_download_status keeps is_downloaded=true (directory
+        // existence is its check for directory models) and the model
+        // stays selectable.
+        for mut server_model in model_families::server::list_server_models() {
+            let dir = models_dir.join(&server_model.filename);
+            if !dir.exists() {
+                if let Err(e) = fs::create_dir_all(&dir) {
+                    warn!("Failed to create server model dir {:?}: {}", dir, e);
+                    continue;
+                }
+            }
+            server_model.is_downloaded = true;
+            available_models
+                .entry(server_model.id.clone())
+                .or_insert(server_model);
         }
 
         let manager = Self {

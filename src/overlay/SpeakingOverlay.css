@@ -141,7 +141,8 @@
   min-width: 0;
   padding: 12px 14px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .speaking-text {
@@ -215,6 +216,46 @@
 /* Freeze waveform when paused */
 .speaking-overlay.paused .waveform-bar {
   animation-play-state: paused;
+}
+
+/* Live level bars: driven by the real audio level from the backend
+   ("overlay-level" events) instead of the decorative bounce loop. */
+.waveform-bars.live .waveform-bar {
+  animation: none;
+  opacity: 0.9;
+  transition: height 60ms linear;
+}
+
+/* Active model (and voice), shown above the spoken text and under
+   "Processing..." so the user sees which model is working. */
+.model-label {
+  color: rgba(155, 232, 112, 0.85);
+  font-size: 10px;
+  line-height: 1.2;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin-bottom: 3px;
+}
+
+.processing-layer .overlay-middle {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.processing-layer .model-label {
+  margin-bottom: 0;
+}
+
+/* Processing pill with a model line: two rows need more room than the
+   36 px default; the ResizeObserver reports the new height to the
+   backend, which resizes the native window to match. */
+.speaking-overlay.processing-state.has-model {
+  width: 220px;
+  height: 46px;
 }
 
 /* ── Pause/play button ── */

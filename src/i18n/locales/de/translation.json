@@ -4,7 +4,14 @@
     "checkUpdates": "Nach Updates suchen...",
     "copyLastText": "Letzte Transkription kopieren",
     "unloadModel": "Modell entladen",
-    "quit": "Beenden"
+    "quit": "Beenden",
+    "server": "Sprachserver",
+    "serverModels": "Modell",
+    "serverVoices": "Stimme",
+    "serverLanguage": "Sprache",
+    "serverTemperature": "Temperatur",
+    "serverMissingSample": "braucht Stimmprobe",
+    "serverOffline": "offline"
   },
   "sidebar": {
     "general": "Allgemein",

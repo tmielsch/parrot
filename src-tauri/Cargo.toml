@@ -57,7 +57,8 @@ env_filter = "0.1.0"
 tokio = "1.43.0"
 enigo = "0.6.1"
 rodio = "0.22.1"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+serde_yaml = "0.9"
 futures-util = "0.3"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }

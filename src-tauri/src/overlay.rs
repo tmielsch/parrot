@@ -10,6 +10,8 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 struct OverlayPayload {
     state: String,
     text: Option<String>,
+    /// Display label of the active model (and voice), if known.
+    model: Option<String>,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -522,9 +524,32 @@ fn show_overlay_state_now(app_handle: &AppHandle, state: &str, text: Option<Stri
         let payload = OverlayPayload {
             state: state.to_string(),
             text,
+            model: active_model_label(app_handle),
         };
         let _ = overlay_window.emit("show-overlay", payload);
     }
+}
+
+/// "<model name> · <voice>" for the overlay, so the user sees which model
+/// is reading. For server models the voice comes from the daemon config
+/// (the tray's voice menu writes it there).
+fn active_model_label(app_handle: &AppHandle) -> Option<String> {
+    let settings = settings::get_settings(app_handle);
+    let model_id = settings.selected_model.clone();
+    if model_id.is_empty() {
+        return None;
+    }
+    let manager = app_handle.try_state::<std::sync::Arc<crate::managers::model::ModelManager>>()?;
+    let info = manager.get_model_info(&model_id)?;
+    let voice = if info.engine_type == crate::managers::model::EngineType::Server {
+        crate::model_families::server::configured_voice_for(&model_id)
+    } else {
+        settings.selected_kokoro_voice.clone()
+    };
+    Some(match voice {
+        Some(v) if !v.is_empty() => format!("{} · {}", info.name, v),
+        _ => info.name,
+    })
 }
 
 /// Shows the speaking overlay window with the spoken text.

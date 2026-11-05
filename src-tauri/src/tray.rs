@@ -1,11 +1,14 @@
 use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::tts::TTSManager;
+use crate::server_settings;
 use crate::settings;
 use crate::tray_i18n::get_tray_translations;
 use log::{error, info, warn};
 use std::sync::Arc;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{
+    CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -120,21 +123,31 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
         .expect("failed to create quit item");
     let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
 
-    let menu = Menu::with_items(
-        app,
-        &[
-            &version_i,
-            &separator(),
-            &copy_last_text_i,
-            &unload_model_i,
-            &separator(),
-            &settings_i,
-            &check_updates_i,
-            &separator(),
-            &quit_i,
-        ],
-    )
-    .expect("failed to create menu");
+    // --- Speech server (ttsd) section ---------------------------------
+    let server_menu = build_server_menu(app, &strings);
+
+    let sep1 = separator();
+    let sep2 = separator();
+    let sep3 = separator();
+    let sep_server = separator();
+
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![
+        &version_i,
+        &sep1,
+        &copy_last_text_i,
+        &unload_model_i,
+        &sep2,
+    ];
+    if let Some(menu) = &server_menu {
+        items.push(&sep_server);
+        items.push(menu);
+    }
+    items.push(&sep3);
+    items.push(&settings_i);
+    items.push(&check_updates_i);
+    items.push(&quit_i);
+
+    let menu = Menu::with_items(app, &items).expect("failed to create menu");
 
     let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
@@ -174,6 +187,160 @@ pub fn copy_last_text(app: &AppHandle) {
     }
 
     info!("Copied last transcript to clipboard via tray.");
+}
+
+/// Builds the nested "Speech Server" submenu from the daemon snapshot:
+/// model list (checkmark on the active one), voices of the active model,
+/// language list and temperature steps. Greyed-out entries mark missing
+/// clone references and an offline daemon.
+fn build_server_menu(
+    app: &AppHandle,
+    strings: &crate::tray_i18n::TrayStrings,
+) -> Option<Submenu<tauri::Wry>> {
+    let (status, config) = server_settings::tray_server_snapshot();
+    let header = if status.alive {
+        strings.server.clone()
+    } else {
+        format!("{} ({})", strings.server, strings.server_offline)
+    };
+
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+
+    let Some(config) = config else {
+        // Daemon offline: one disabled info entry instead of an empty menu.
+        let offline = MenuItem::with_id(
+            app,
+            "server:offline",
+            &format!("{} ({})", strings.server, strings.server_offline),
+            false,
+            None::<&str>,
+        )
+        .ok()?;
+        items.push(Box::new(offline));
+        return Submenu::with_id_and_items(app, "server", &header, true, &ref_items(&items)).ok();
+    };
+
+    let active = config.active_model.clone().unwrap_or_default();
+
+    // --- Model submenu ---
+    let mut model_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+    for model in &config.models {
+        let id = format!("server:model:{}", model.id);
+        let checked = model.id == active;
+        let mut label = model.alias.clone();
+        // flag models whose clone references are all missing
+        if model.engine_kind == "chatterbox" && model.clones.iter().all(|c| c.missing) {
+            label = format!("{} ({})", model.alias, strings.server_missing_sample);
+        }
+        if let Ok(item) = CheckMenuItem::with_id(app, &id, &label, true, checked, None::<&str>) {
+            model_items.push(Box::new(item));
+        }
+    }
+    if !model_items.is_empty() {
+        if let Ok(sub) =
+            Submenu::with_id_and_items(app, "server-models", &strings.server_models, true, &ref_items(&model_items))
+        {
+            items.push(Box::new(sub));
+        }
+    }
+
+    // --- Voice submenu for the active model ---
+    if let Some(model) = config.models.iter().find(|m| m.id == active) {
+        let mut voice_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+        let current_voice = model.default_voice.clone().unwrap_or_default();
+        let mut voices = model.voices.clone();
+        for clone in &model.clones {
+            if !voices.contains(&clone.name) {
+                voices.push(clone.name.clone());
+            }
+        }
+        for voice in voices {
+            let missing = model
+                .clones
+                .iter()
+                .any(|c| c.name == voice && c.missing);
+            let label = if missing {
+                format!("{} ({})", voice, strings.server_missing_sample)
+            } else {
+                voice.clone()
+            };
+            let id = format!("server:voice:{}:{}", model.id, voice);
+            let checked = voice == current_voice;
+            if let Ok(item) =
+                CheckMenuItem::with_id(app, &id, &label, !missing, checked, None::<&str>)
+            {
+                voice_items.push(Box::new(item));
+            }
+        }
+        if !voice_items.is_empty() {
+            if let Ok(sub) = Submenu::with_id_and_items(
+                app,
+                "server-voices",
+                &strings.server_voices,
+                true,
+                &ref_items(&voice_items),
+            ) {
+                items.push(Box::new(sub));
+            }
+        }
+    }
+
+    // --- Language submenu ---
+    if let Some(model) = config.models.iter().find(|m| m.id == active) {
+        let current_lang = config.lang_code.clone().unwrap_or_default();
+        let mut lang_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+        for lang in &model.languages {
+            let id = format!("server:lang:{}", lang);
+            let checked = *lang == current_lang;
+            if let Ok(item) =
+                CheckMenuItem::with_id(app, &id, lang, true, checked, None::<&str>)
+            {
+                lang_items.push(Box::new(item));
+            }
+        }
+        if !lang_items.is_empty() {
+            if let Ok(sub) = Submenu::with_id_and_items(
+                app,
+                "server-langs",
+                &strings.server_language,
+                true,
+                &ref_items(&lang_items),
+            ) {
+                items.push(Box::new(sub));
+            }
+        }
+
+        // --- Temperature submenu ---
+        let current_temp = config.temperature.unwrap_or(0.2);
+        let mut temp_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+        for step in [0.1, 0.2, 0.3, 0.5, 0.7] {
+            let id = format!("server:temp:{step}");
+            let label = format!("{step}");
+            let checked = (current_temp - step).abs() < 0.05;
+            if let Ok(item) = CheckMenuItem::with_id(app, &id, &label, true, checked, None::<&str>)
+            {
+                temp_items.push(Box::new(item));
+            }
+        }
+        if let Ok(sub) = Submenu::with_id_and_items(
+            app,
+            "server-temp",
+            &strings.server_temperature,
+            true,
+            &ref_items(&temp_items),
+        ) {
+            items.push(Box::new(sub));
+        }
+    }
+
+    Submenu::with_id_and_items(app, "server", &header, true, &ref_items(&items)).ok()
+}
+
+/// Turns boxed menu items into references Menu::with_items accepts.
+fn ref_items(
+    items: &[Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>],
+) -> Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> {
+    items.iter().map(|i| i.as_ref()).collect()
 }
 
 #[cfg(test)]

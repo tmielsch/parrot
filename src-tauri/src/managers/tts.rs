@@ -24,9 +24,14 @@ use crate::utils::{hide_speaking_overlay, show_processing_overlay, show_speaking
 /// The built-in default model.
 pub const MODEL_ID: &str = "kokoro";
 const ENGINE_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(2);
-/// Number of samples to crossfade between text-level chunks (10ms @ 24kHz).
-/// Matches the crossfade length used by tts-rs for sub-chunk blending.
-const CROSSFADE_SAMPLES: usize = 240;
+/// Crossfade length between text-level chunks. 10 ms matches the 240
+/// samples tts-rs uses at 24 kHz; server models may run at other rates
+/// (Ming: 44.1 kHz), so the sample count is derived per chunk.
+const CROSSFADE_MS: u32 = 10;
+
+fn crossfade_samples(sample_rate: u32) -> usize {
+    (sample_rate as usize * CROSSFADE_MS as usize) / 1000
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelStateEvent {
@@ -352,7 +357,7 @@ impl TTSManager {
 
         if !engine_is_loaded(&self.engine) {
             return Err(anyhow!(
-                "Kokoro model is not loaded. Install model files and try again."
+                "TTS model is not loaded. Install the model files, or start the speech server (ttsd), and try again."
             ));
         }
 
@@ -460,7 +465,7 @@ impl TTSManager {
             }
 
             if !engine_is_loaded(&engine) {
-                let message = "Kokoro model is not loaded. Install model files and try again.";
+                let message = "TTS model is not loaded. Install the model files, or start the speech server (ttsd), and try again.";
                 error!("{}", message);
                 if set_idle_and_cleanup_for_request(
                     &generation,
@@ -543,7 +548,7 @@ impl TTSManager {
             }
 
             if !engine_is_loaded(&engine) {
-                let message = "Kokoro model is not loaded. Install model files and try again.";
+                let message = "TTS model is not loaded. Install the model files, or start the speech server (ttsd), and try again.";
                 error!("{}", message);
                 if set_idle_and_cleanup_for_request(
                     &generation,
@@ -586,9 +591,9 @@ impl TTSManager {
             let mut collected_samples: Vec<f32> = Vec::new();
             let mut collected_sample_rate: u32 = 24000;
             let mut crossfade_tail: Option<Vec<f32>> = None;
-            // Channel for sending (chunk_index, duration_secs) to the overlay
-            // text updater thread as chunks are appended to the audio sink.
-            let (chunk_dur_tx, chunk_dur_rx) = mpsc::channel::<(usize, f32)>();
+            // Channel for sending (chunk_index, duration_secs, level envelope)
+            // to the overlay updater thread as chunks are appended to the sink.
+            let (chunk_dur_tx, chunk_dur_rx) = mpsc::channel::<ChunkTiming>();
             let mut chunk_dur_rx = Some(chunk_dur_rx);
 
             for (chunk_index, chunk) in chunks.iter().enumerate() {
@@ -679,9 +684,10 @@ impl TTSManager {
                 if let Some(prev_tail) = crossfade_tail.take() {
                     apply_crossfade(&prev_tail, &mut samples);
                 }
-                // Hold back the last CROSSFADE_SAMPLES for blending with the next chunk
-                if samples.len() > CROSSFADE_SAMPLES {
-                    let split = samples.len() - CROSSFADE_SAMPLES;
+                // Hold back the last crossfade window for blending with the next chunk
+                let crossfade_len = crossfade_samples(synthesis.sample_rate);
+                if samples.len() > crossfade_len {
+                    let split = samples.len() - crossfade_len;
                     crossfade_tail = Some(samples[split..].to_vec());
                     samples.truncate(split);
                 }
@@ -690,14 +696,19 @@ impl TTSManager {
                 // the overlay text updater's sleep timing doesn't drift ahead
                 // of real playback by CROSSFADE_SAMPLES on every chunk.
                 let appended_audio_seconds = samples.len() as f32 / synthesis.sample_rate as f32;
+                let levels = level_envelope(&samples, synthesis.sample_rate);
                 shared_sink.append(SamplesBuffer::new(
                     NonZero::new(1u16).unwrap(),
                     NonZero::new(synthesis.sample_rate).unwrap(),
                     samples,
                 ));
-                // Feed the overlay text updater thread so it can schedule
-                // when to show each chunk's text during playback.
-                let _ = chunk_dur_tx.send((chunk_index, appended_audio_seconds));
+                // Feed the overlay updater thread so it can schedule when to
+                // show each chunk's text and animate its level bars.
+                let _ = chunk_dur_tx.send(ChunkTiming {
+                    index: chunk_index,
+                    duration_secs: appended_audio_seconds,
+                    levels,
+                });
 
                 if !started_playback {
                     if !request_is_active(&generation, &active_request, request_id) {
@@ -893,7 +904,7 @@ impl TTSManager {
 /// The timer pauses when TTS playback is paused and exits when the request
 /// is cancelled or all chunks have been emitted.
 fn overlay_text_updater(
-    rx: mpsc::Receiver<(usize, f32)>,
+    rx: mpsc::Receiver<ChunkTiming>,
     chunks: &[String],
     lifecycle_state: &AtomicU8,
     generation: &AtomicU64,
@@ -904,7 +915,7 @@ fn overlay_text_updater(
     // We emit each chunk's text *before* sleeping through its duration,
     // which correctly handles both the normal case (chunks pre-buffered)
     // and the "gap" case (synthesis lagging behind playback).
-    let mut pending: Vec<(usize, f32)> = Vec::new();
+    let mut pending: Vec<ChunkTiming> = Vec::new();
     let mut current: usize = 0; // index of the chunk we're about to sleep through
 
     // Chunk 0's text is already shown by show_speaking_overlay.
@@ -936,15 +947,16 @@ fn overlay_text_updater(
         // when the chunk starts playing — whether it was pre-buffered or
         // arrived after a synthesis gap.
         if current > 0 {
-            let (chunk_idx, _) = pending[current];
+            let chunk_idx = pending[current].index;
             if let Some(text) = chunks.get(chunk_idx) {
                 let _ = app_handle.emit("overlay-text", text.as_str());
             }
         }
 
-        // Sleep through the current chunk's audio duration
-        let (_chunk_idx, duration_secs) = pending[current];
-        let sleep_target = Duration::from_secs_f32(duration_secs);
+        // Sleep through the current chunk's audio duration, emitting the
+        // level of the window that is playing right now so the overlay's
+        // bars follow the real audio instead of a decorative loop.
+        let sleep_target = Duration::from_secs_f32(pending[current].duration_secs);
         let mut slept = Duration::ZERO;
 
         while slept < sleep_target {
@@ -961,6 +973,11 @@ fn overlay_text_updater(
                 return;
             }
 
+            let window = (slept.as_millis() / LEVEL_WINDOW_MS as u128) as usize;
+            if let Some(level) = pending[current].levels.get(window) {
+                let _ = app_handle.emit("overlay-level", *level);
+            }
+
             let step = Duration::from_millis(50).min(sleep_target - slept);
             thread::sleep(step);
             slept += step;
@@ -968,6 +985,31 @@ fn overlay_text_updater(
 
         current += 1;
     }
+}
+
+/// Length of one level window sent to the overlay (matches the updater's
+/// 50 ms sleep step).
+const LEVEL_WINDOW_MS: u32 = 50;
+
+/// One synthesized chunk as seen by the overlay updater.
+struct ChunkTiming {
+    index: usize,
+    duration_secs: f32,
+    /// Normalized RMS level (0.0..=1.0) per LEVEL_WINDOW_MS window.
+    levels: Vec<f32>,
+}
+
+/// RMS level per LEVEL_WINDOW_MS window, scaled so ordinary speech fills
+/// most of the bar height (speech RMS sits around 0.05..0.2).
+fn level_envelope(samples: &[f32], sample_rate: u32) -> Vec<f32> {
+    let window = ((sample_rate as usize * LEVEL_WINDOW_MS as usize) / 1000).max(1);
+    samples
+        .chunks(window)
+        .map(|w| {
+            let mean_sq = w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32;
+            (mean_sq.sqrt() * 4.0).min(1.0)
+        })
+        .collect()
 }
 
 /// Linear crossfade: blend `prev_tail` into the beginning of `samples`.
