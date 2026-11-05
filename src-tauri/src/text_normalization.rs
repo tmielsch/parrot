@@ -4,6 +4,12 @@ pub fn normalize_text_for_tts(text: &str) -> String {
     if text.trim().is_empty() {
         return String::new();
     }
+    // Selected text from web pages and PDFs is not Markdown: leading
+    // spaces or tabs would turn whole paragraphs into indented code blocks
+    // ("Code example omitted." and the rest was dropped). Only fenced
+    // blocks (```) still count as code.
+    let text = dedent_lines(text);
+    let text = text.as_str();
 
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -19,7 +25,175 @@ pub fn normalize_text_for_tts(text: &str) -> String {
         renderer.handle_event(event);
     }
 
-    renderer.finish()
+    clarify_pauses(&renderer.finish())
+}
+
+/// Lines at least this long that end without punctuation are taken as
+/// wrapped prose (PDF, narrow columns) and joined with the next line.
+/// Shorter ones are headings, labels or list entries and stay separate.
+const WRAPPED_LINE_MIN_CHARS: usize = 60;
+
+/// Bullet glyphs from web pages and PDFs; rewritten to Markdown "- ".
+const BULLET_GLYPHS: &[char] = &['•', '·', '◦', '▪', '▫', '‣', '●', '○', '■', '□', '➤', '►', '▶', '✓', '✔', '→'];
+
+/// Prepares selected text for the Markdown pass:
+///
+/// - removes leading indentation outside fenced code blocks (indented
+///   paragraphs would otherwise become code blocks and be skipped);
+/// - turns bullet glyphs into Markdown list items;
+/// - keeps single line breaks: each short line becomes its own block so
+///   it gets a pause, while long unpunctuated lines are joined (wrapped
+///   prose, no period in the middle of a sentence).
+fn dedent_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    let mut in_fence = false;
+    let mut prev: Option<String> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            if !in_fence {
+                out.push('\n');
+            }
+            in_fence = !in_fence;
+            out.push_str(trimmed);
+            out.push('\n');
+            prev = None;
+            continue;
+        }
+        if in_fence {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if trimmed.is_empty() {
+            out.push('\n');
+            prev = None;
+            continue;
+        }
+        let item = as_list_item(trimmed);
+        let is_item = item.is_some();
+        let current = item.unwrap_or_else(|| trimmed.to_string());
+        if let Some(previous) = prev.as_deref() {
+            let previous_is_item = is_list_line(previous);
+            let wrapped = !is_item
+                && !previous_is_item
+                && previous.chars().count() >= WRAPPED_LINE_MIN_CHARS
+                && !previous.ends_with(|c: char| matches!(c, '.' | '!' | '?' | ':' | ';' | '…'));
+            if !wrapped {
+                // Separate block: Markdown needs a blank line.
+                out.push('\n');
+            }
+        }
+        out.push_str(&current);
+        out.push('\n');
+        prev = Some(current);
+    }
+    out
+}
+
+fn as_list_item(line: &str) -> Option<String> {
+    let first = line.chars().next()?;
+    if BULLET_GLYPHS.contains(&first) {
+        let rest = line[first.len_utf8()..].trim_start();
+        return Some(format!("- {rest}"));
+    }
+    if is_list_line(line) {
+        return Some(line.to_string());
+    }
+    None
+}
+
+fn is_list_line(line: &str) -> bool {
+    if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
+        return true;
+    }
+    let digits: String = line.chars().take_while(|c| c.is_ascii_digit()).collect();
+    !digits.is_empty()
+        && digits.len() <= 3
+        && line[digits.len()..].starts_with(|c: char| c == '.' || c == ')')
+        && line[digits.len() + 1..].starts_with(' ')
+}
+
+/// Makes the text structure audible for speech models, which pause
+/// reliably only at sentence ends:
+///
+/// - every non-empty line ends with terminal punctuation, so list items,
+///   headings, table rows and single-line paragraphs get their pause even
+///   when the source had no period (web pages rarely do);
+/// - dashes used as pauses (" - ", " – ", " — ", "--") become a period;
+///   hyphens inside words ("Herz-Kreislauf") and number ranges stay.
+fn clarify_pauses(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for (index, line) in text.lines().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        let mut line = replace_pause_dashes(line.trim());
+        if line.is_empty() {
+            continue;
+        }
+        // "Punkt,." / "Punkt –." from a cut-off sentence: keep the period.
+        while line.ends_with('.') {
+            let body = line[..line.len() - 1].trim_end();
+            if body.ends_with(|c: char| matches!(c, ',' | '-' | '–' | '—')) {
+                line = format!("{}.", body[..body.len() - body.chars().last().unwrap().len_utf8()].trim_end());
+            } else {
+                break;
+            }
+        }
+        if !line.ends_with(|c: char| matches!(c, '.' | '!' | '?' | '…' | ':' | ';')) {
+            // A trailing comma or dash is a cut-off sentence: replace it.
+            while line.ends_with(|c: char| matches!(c, ',' | '-' | '–' | '—')) {
+                line.pop();
+                line.truncate(line.trim_end().len());
+            }
+            if !line.is_empty() {
+                line.push('.');
+            }
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
+/// Turns dashes that stand for a pause into sentence breaks.
+fn replace_pause_dashes(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let prev = if i == 0 { None } else { Some(chars[i - 1]) };
+        let is_dash = matches!(c, '-' | '–' | '—');
+        // "--" (two hyphens) counts as one long dash.
+        let run_end = if c == '-' && chars.get(i + 1) == Some(&'-') { i + 2 } else { i + 1 };
+        let next = chars.get(run_end).copied();
+        let spaced = prev.map_or(true, char::is_whitespace) && next.map_or(true, char::is_whitespace);
+        let long_dash = matches!(c, '—') || run_end == i + 2;
+        // An en dash between digits is a range ("1990–2000"): keep it.
+        let digit_range = c == '–'
+            && prev.map_or(false, |p| p.is_ascii_digit())
+            && next.map_or(false, |n| n.is_ascii_digit());
+        if is_dash && !digit_range && (spaced || long_dash) {
+            // Drop the space before the dash, end the sentence, and
+            // capitalise nothing: models read lower-case starts fine.
+            out.truncate(out.trim_end().len());
+            if !out.is_empty() && !out.ends_with(|ch: char| matches!(ch, '.' | '!' | '?' | ':' | ';')) {
+                out.push('.');
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            i = run_end;
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out.trim().to_string()
 }
 
 #[derive(Default)]
@@ -613,6 +787,53 @@ fn main() {
     }
 
     #[test]
+    fn reads_indented_web_text_instead_of_skipping_it() {
+        let text = "Erster Absatz einer Webseite.\n\n    Eingerückter zweiter Absatz, der gelesen werden muss.\n\tDritter Absatz mit Tab.";
+        let spoken = normalize_text_for_tts(text);
+        assert!(!spoken.contains("Code example omitted"), "{spoken}");
+        assert!(spoken.contains("Eingerückter zweiter Absatz, der gelesen werden muss."));
+        assert!(spoken.contains("Dritter Absatz mit Tab."));
+    }
+
+    #[test]
+    fn fenced_code_is_still_skipped() {
+        let spoken = normalize_text_for_tts("Davor.\n\n```\n    let x = 1;\n```\n\nDanach.");
+        assert!(spoken.contains("Code example omitted."));
+        assert!(spoken.contains("Danach."));
+        assert!(!spoken.contains("let x"));
+    }
+
+    #[test]
+    fn every_line_and_bullet_ends_with_a_pause() {
+        let text = "Überschrift ohne Punkt\nZeile zwei ohne Punkt\n\n• Erster Punkt\n• Zweiter Punkt,\n- Dritter Punkt";
+        let spoken = normalize_text_for_tts(text);
+        assert!(spoken.contains("Überschrift ohne Punkt."), "{spoken}");
+        assert!(spoken.contains("Zeile zwei ohne Punkt."), "{spoken}");
+        assert!(spoken.contains("Erster Punkt."), "{spoken}");
+        assert!(spoken.contains("Zweiter Punkt."), "{spoken}");
+        assert!(spoken.contains("Dritter Punkt."), "{spoken}");
+    }
+
+    #[test]
+    fn wrapped_pdf_lines_are_joined_without_a_period() {
+        let text = "Während in den ersten Tagen nach einem Schlaganfall vor allem die\nneurologischen Ausfälle im Vordergrund stehen, gewinnen andere an Bedeutung.";
+        let spoken = normalize_text_for_tts(text);
+        assert!(spoken.contains("vor allem die neurologischen Ausfälle"), "{spoken}");
+        assert!(!spoken.contains("die."), "{spoken}");
+    }
+
+    #[test]
+    fn pause_dashes_become_periods_but_word_hyphens_stay() {
+        let spoken = normalize_text_for_tts(
+            "Das Ergebnis – überraschend – war klar. Herz-Kreislauf bleibt. Zahlen 1990–2000 auch. Ende -- wirklich",
+        );
+        assert!(spoken.contains("Das Ergebnis. überraschend. war klar."), "{spoken}");
+        assert!(spoken.contains("Herz-Kreislauf bleibt."), "{spoken}");
+        assert!(spoken.contains("1990–2000"), "{spoken}");
+        assert!(spoken.contains("Ende. wirklich."), "{spoken}");
+    }
+
+    #[test]
     fn keeps_contractions_and_quoted_words_intact() {
         assert_eq!(
             normalize_text_for_tts("I don't know, it's fine. We'll see."),
@@ -645,7 +866,8 @@ fn main() {
 "#;
 
         let spoken = normalize_text_for_tts(markdown);
-        assert!(spoken.contains("AT&T uses smart quotes: ’hello’ and — dash."));
+        // A spaced dash is a pause and becomes a sentence break.
+        assert!(spoken.contains("AT&T uses smart quotes: ’hello’ and. dash."), "{spoken}");
     }
 
     #[test]

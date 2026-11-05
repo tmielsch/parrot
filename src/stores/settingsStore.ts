@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { AppSettings as Settings, AudioDevice } from "@/bindings";
+import type { AppSettings as Settings, AudioDevice, PlaybackMode } from "@/bindings";
 import { commands } from "@/bindings";
 
 interface SettingsStore {
@@ -87,6 +87,8 @@ const settingUpdaters: {
   tts_speed: (value) => commands.changeTtsSpeedSetting(value as number),
   tts_shorten_first_chunk: (value) =>
     commands.changeTtsShortenFirstChunkSetting(value as boolean),
+  tts_playback_mode: (value) =>
+    commands.changeTtsPlaybackModeSetting(value as PlaybackMode),
   show_close_button: (value) =>
     commands.changeShowCloseButtonSetting(value as boolean),
 };

@@ -17,9 +17,11 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::audio_feedback;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::{EngineType, ModelManager};
-use crate::settings::{get_settings, ModelUnloadTimeout};
+use crate::settings::{get_settings, ModelUnloadTimeout, PlaybackMode};
 use crate::text_normalization::normalize_text_for_tts;
-use crate::utils::{hide_speaking_overlay, show_processing_overlay, show_speaking_overlay};
+use crate::utils::{
+    hide_speaking_overlay, show_processing_overlay, show_processing_progress, show_speaking_overlay,
+};
 
 /// The built-in default model.
 pub const MODEL_ID: &str = "kokoro";
@@ -486,7 +488,10 @@ impl TTSManager {
 
             let tts_settings = get_settings(&app_handle);
             let tts_speed = tts_settings.tts_speed;
-            let shorten_first_chunk = tts_settings.tts_shorten_first_chunk;
+            let playback_mode = tts_settings.tts_playback_mode;
+            // A short first chunk only helps when playback starts after it.
+            let shorten_first_chunk = tts_settings.tts_shorten_first_chunk
+                && playback_mode == PlaybackMode::Stream;
             let normalized_text = normalize_text_for_tts(&text);
 
             debug!(
@@ -710,7 +715,25 @@ impl TTSManager {
                     levels,
                 });
 
-                if !started_playback {
+                // Report render progress while playback has not started yet
+                // (buffered and complete modes hold the audio back).
+                if !started_playback && playback_mode != PlaybackMode::Stream {
+                    show_processing_progress(&app_handle, chunk_index + 1, total_chunks);
+                }
+
+                let chars_done: usize = chunks[..=chunk_index].iter().map(|c| c.len()).sum();
+                let next_chunk_chars = chunks.get(chunk_index + 1).map_or(0, |c| c.len());
+                let ready_to_play = playback_start_reached(
+                    playback_mode,
+                    chunk_index + 1 == total_chunks,
+                    buffered_seconds,
+                    total_synth_secs,
+                    chars_done,
+                    total_chars,
+                    next_chunk_chars,
+                );
+
+                if !started_playback && ready_to_play {
                     if !request_is_active(&generation, &active_request, request_id) {
                         shared_sink.stop();
                         clear_active_request_if_owned(&active_request, request_id);
@@ -767,6 +790,46 @@ impl TTSManager {
 
             // Drop the sender so the overlay updater thread knows no more chunks are coming.
             drop(chunk_dur_tx);
+
+            // Buffered/complete mode with all chunks rendered before the
+            // start condition fired (or a single chunk): start now.
+            if !started_playback && total_audio_seconds > 0.0 {
+                if !request_is_active(&generation, &active_request, request_id) {
+                    shared_sink.stop();
+                    clear_active_request_if_owned(&active_request, request_id);
+                    clear_sink_if_owned_by_request(&current_sink, request_id);
+                    return;
+                }
+                started_playback = true;
+                lifecycle_state.store(TtsLifecycleState::Speaking as u8, Ordering::SeqCst);
+                show_speaking_overlay(&app_handle, chunks.first().cloned());
+                crate::shortcut::register_play_pause_shortcut(&app_handle);
+                audio_feedback::play_sound(&app_handle, audio_feedback::SoundType::Start);
+                shared_sink.play();
+                if let Some(rx) = chunk_dur_rx.take() {
+                    let overlay_chunks = Arc::clone(&chunks);
+                    let overlay_lifecycle = Arc::clone(&lifecycle_state);
+                    let overlay_generation = Arc::clone(&generation);
+                    let overlay_app = app_handle.clone();
+                    thread::spawn(move || {
+                        overlay_text_updater(
+                            rx,
+                            &overlay_chunks,
+                            &overlay_lifecycle,
+                            &overlay_generation,
+                            request_id,
+                            &overlay_app,
+                        );
+                    });
+                }
+                info!(
+                    "TTS playback started in {}ms after full render (mode={:?}, {:.2}s audio, rtf={:.2})",
+                    started_at.elapsed().as_millis(),
+                    playback_mode,
+                    total_audio_seconds,
+                    total_synth_secs / total_audio_seconds.max(0.001),
+                );
+            }
 
             // Flush any held-back crossfade tail from the final chunk
             if let Some(tail) = crossfade_tail.take() {
@@ -1376,6 +1439,50 @@ const SENTENCE_JOIN_SOFT_LIMIT_CHARS: usize = 380;
 /// before it, so its synthesis overlaps playback of the earlier chunks instead
 /// of starving the player. Jumping straight from a short first chunk to a
 /// full-size one causes audible stalls on near-realtime CPUs.
+/// Safety margin for buffered mode: start only when the buffered audio
+/// covers the estimated remaining render time plus this share.
+const BUFFER_SAFETY_FACTOR: f32 = 1.15;
+
+/// Decides whether playback may start after a chunk was rendered.
+///
+/// - Stream: after the first chunk with audio.
+/// - Complete: after the last chunk.
+/// - Buffered: when playback can no longer catch up with rendering.
+///   With real-time factor r (render seconds per audio second, measured so
+///   far) and A seconds of audio still to render, playback empties the
+///   buffer B while rendering refills it at 1/r. The gap-free condition is
+///   B >= A * (r - 1) for a slow engine (r > 1), and in every case B must
+///   cover rendering the next chunk. Both get a 15 % safety margin.
+fn playback_start_reached(
+    mode: PlaybackMode,
+    last_chunk: bool,
+    buffered_seconds: f32,
+    synth_seconds: f32,
+    chars_done: usize,
+    total_chars: usize,
+    next_chunk_chars: usize,
+) -> bool {
+    if buffered_seconds <= 0.0 {
+        return false;
+    }
+    match mode {
+        PlaybackMode::Stream => true,
+        PlaybackMode::Complete => last_chunk,
+        PlaybackMode::Buffered => {
+            if last_chunk {
+                return true;
+            }
+            let chars_done = chars_done.max(1) as f32;
+            let rtf = synth_seconds / buffered_seconds;
+            let audio_per_char = buffered_seconds / chars_done;
+            let remaining_audio = audio_per_char * total_chars.saturating_sub(chars_done as usize) as f32;
+            let catch_up = remaining_audio * (rtf - 1.0).max(0.0);
+            let next_render = synth_seconds / chars_done * next_chunk_chars as f32;
+            buffered_seconds >= catch_up.max(next_render) * BUFFER_SAFETY_FACTOR
+        }
+    }
+}
+
 fn chunk_target_chars(chars_already_chunked: usize, shorten_first_chunk: bool) -> usize {
     if !shorten_first_chunk {
         return CHUNK_TARGET_CHARS;
@@ -1749,6 +1856,37 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
+
+    use super::playback_start_reached;
+    use crate::settings::PlaybackMode;
+
+    #[test]
+    fn playback_start_per_mode() {
+        // Stream: first chunk with audio starts playback.
+        assert!(playback_start_reached(PlaybackMode::Stream, false, 3.0, 4.0, 60, 600, 200));
+        // Complete: only after the last chunk.
+        assert!(!playback_start_reached(PlaybackMode::Complete, false, 30.0, 1.0, 590, 600, 10));
+        assert!(playback_start_reached(PlaybackMode::Complete, true, 30.0, 40.0, 600, 600, 0));
+        // Nothing buffered yet: never start.
+        assert!(!playback_start_reached(PlaybackMode::Buffered, true, 0.0, 1.0, 600, 600, 0));
+    }
+
+    #[test]
+    fn buffered_mode_waits_until_rendering_cannot_fall_behind() {
+        // Slow engine, rtf 1.3 (5 s audio rendered in 6.5 s from 100 chars).
+        // 1000 chars total: ~45 s audio still missing, catch-up 45*0.3 =
+        // 13.5 s (x1.15) > 5 s buffered -> wait.
+        assert!(!playback_start_reached(PlaybackMode::Buffered, false, 5.0, 6.5, 100, 1000, 260));
+        // Same engine after 700 chars (35 s buffered): 15 s missing, catch-up
+        // 4.5 s, next chunk 260 chars renders in ~16.9 s (x1.15 = 19.4 s):
+        // 35 s buffer covers both -> start.
+        assert!(playback_start_reached(PlaybackMode::Buffered, false, 35.0, 45.5, 700, 1000, 260));
+        // Fast engine (rtf 0.3, 5 s in 1.5 s): the next 260-char chunk
+        // renders in 3.9 s (x1.15 = 4.5 s) < 5 s buffered -> start at once.
+        assert!(playback_start_reached(PlaybackMode::Buffered, false, 5.0, 1.5, 100, 1000, 260));
+        // Fast engine but a huge next chunk it cannot render in time: wait.
+        assert!(!playback_start_reached(PlaybackMode::Buffered, false, 1.0, 0.3, 20, 1000, 320));
+    }
     use std::time::Duration;
 
     #[test]

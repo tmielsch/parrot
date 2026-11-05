@@ -700,6 +700,18 @@ pub fn change_tts_speed_setting(app: AppHandle, speed: f32) -> Result<(), String
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_tts_playback_mode_setting(
+    app: AppHandle,
+    mode: settings::PlaybackMode,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_playback_mode = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_tts_shorten_first_chunk_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.tts_shorten_first_chunk = enabled;

@@ -249,6 +249,24 @@ pub struct AppSettings {
     pub tts_speed: f32,
     #[serde(default = "default_tts_shorten_first_chunk")]
     pub tts_shorten_first_chunk: bool,
+    /// When playback starts: right after the first sentence, once enough
+    /// audio is buffered to play through without gaps, or after the
+    /// whole text is rendered.
+    #[serde(default)]
+    pub tts_playback_mode: PlaybackMode,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackMode {
+    /// Start after the first sentence (Parrot's original behaviour).
+    Stream,
+    /// Start once the buffered audio covers the estimated remaining render
+    /// time, so playback does not stall between sentences.
+    #[default]
+    Buffered,
+    /// Render everything, then play it in one piece.
+    Complete,
 }
 
 fn default_model() -> String {
@@ -386,6 +404,7 @@ pub fn get_default_settings() -> AppSettings {
         show_tray_icon: default_show_tray_icon(),
         tts_speed: default_tts_speed(),
         tts_shorten_first_chunk: default_tts_shorten_first_chunk(),
+        tts_playback_mode: PlaybackMode::default(),
         show_close_button: default_show_close_button(),
     }
 }

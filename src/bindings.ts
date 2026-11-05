@@ -192,6 +192,14 @@ async changeTtsShortenFirstChunkSetting(enabled: boolean) : Promise<Result<null,
     else return { status: "error", error: e  as any };
 }
 },
+async changeTtsPlaybackModeSetting(mode: PlaybackMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_tts_playback_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Start key recording mode
  */
@@ -725,7 +733,13 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 /** user-defined types **/
 
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; selected_output_device?: string | null; selected_language?: string; selected_kokoro_voice?: string | null; show_close_button?: boolean; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeout; history_limit?: number; history_retention_period?: HistoryRetentionPeriod; app_language?: string; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; tts_speed?: number; tts_shorten_first_chunk?: boolean }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; selected_output_device?: string | null; selected_language?: string; selected_kokoro_voice?: string | null; show_close_button?: boolean; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; model_unload_timeout?: ModelUnloadTimeout; history_limit?: number; history_retention_period?: HistoryRetentionPeriod; app_language?: string; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; tts_speed?: number; tts_shorten_first_chunk?: boolean; 
+/**
+ * When playback starts: right after the first sentence, once enough
+ * audio is buffered to play through without gaps, or after the
+ * whole text is rendered.
+ */
+tts_playback_mode?: PlaybackMode }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type CustomSounds = { start: boolean; stop: boolean }
@@ -772,6 +786,20 @@ components?: ModelComponent[] }
 export type ModelStatus = { model_id: string; model_name: string; model_description: string; accuracy_score: number; speed_score: number; is_recommended: boolean; model_dir: string; model_files_present: boolean; model_loaded: boolean }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_5"
 export type OverlayPosition = "none" | "top" | "bottom"
+export type PlaybackMode = 
+/**
+ * Start after the first sentence (Parrot's original behaviour).
+ */
+"stream" | 
+/**
+ * Start once the buffered audio covers the estimated remaining render
+ * time, so playback does not stall between sentences.
+ */
+"buffered" | 
+/**
+ * Render everything, then play it in one piece.
+ */
+"complete"
 export type ServerCloneView = { name: string; 
 /**
  * True when the reference file is missing (menu shows it greyed).

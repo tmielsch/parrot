@@ -35,6 +35,8 @@ const SpeakingOverlay: React.FC = () => {
   // Live audio level (0..1) from the backend; null until the first value
   // arrives, in which case the bars keep their decorative animation.
   const [level, setLevel] = useState<number | null>(null);
+  // Render progress [done, total] while audio is held back.
+  const [progress, setProgress] = useState<[number, number] | null>(null);
   // Suppresses size transitions when the overlay reappears after being
   // hidden, so it snaps to the correct size instantly instead of animating
   // from the previous state's dimensions.
@@ -90,6 +92,7 @@ const SpeakingOverlay: React.FC = () => {
         } else {
           setSpokenText("");
           setLevel(null);
+          setProgress(null);
           setSpeakingPaused(false);
           setIsTogglingPause(false);
         }
@@ -123,6 +126,13 @@ const SpeakingOverlay: React.FC = () => {
         setLevel(event.payload);
       });
 
+      const unlistenProgress = await listen<[number, number]>(
+        "overlay-progress",
+        (event) => {
+          setProgress(event.payload);
+        },
+      );
+
       const unlistenPauseState = await listen<boolean>(
         "tts-pause-state",
         (event) => {
@@ -135,6 +145,7 @@ const SpeakingOverlay: React.FC = () => {
         unlistenHide();
         unlistenText();
         unlistenLevel();
+        unlistenProgress();
         unlistenPauseState();
       };
     };
@@ -188,7 +199,13 @@ const SpeakingOverlay: React.FC = () => {
         </div>
         <div className="overlay-middle">
           <div className="status-text">
-            {t("overlay.processing", { defaultValue: "Processing..." })}
+            {progress && progress[1] > 1
+              ? t("overlay.rendering", {
+                  defaultValue: "Rendering {{done}} / {{total}}",
+                  done: progress[0],
+                  total: progress[1],
+                })
+              : t("overlay.processing", { defaultValue: "Processing..." })}
           </div>
           {modelLabel && <div className="model-label">{modelLabel}</div>}
         </div>

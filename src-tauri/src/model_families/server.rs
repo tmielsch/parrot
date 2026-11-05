@@ -185,6 +185,12 @@ pub struct ModelEntry {
     /// Per-model generation knobs, edited in the settings window.
     #[serde(default)]
     pub params: GenerationParams,
+    /// Language code the backend must receive, whatever the global
+    /// language is. Kartoffelbox (German finetune of the ENGLISH
+    /// Chatterbox) rejects "de" in mlx-audio but reads German text with
+    /// "en" (measured: 21 of 22 words).
+    #[serde(default)]
+    pub force_lang_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -420,6 +426,7 @@ impl ServerEngine {
     ) -> Result<Vec<u8>, String> {
         let lang_code = std::env::var("PARROT_SERVER_LANG")
             .ok()
+            .or_else(|| entry.force_lang_code.as_deref().and_then(nonempty))
             .or_else(|| nonempty(&self.config.defaults.lang_code))
             .or_else(|| entry.languages.first().cloned())
             .unwrap_or_else(|| "de".into());

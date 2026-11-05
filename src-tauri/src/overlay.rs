@@ -552,6 +552,14 @@ fn active_model_label(app_handle: &AppHandle) -> Option<String> {
     })
 }
 
+/// Progress while the text is rendered before playback ("2 / 5").
+/// Only an event: the processing overlay is already on screen.
+pub fn show_processing_progress(app_handle: &AppHandle, done: usize, total: usize) {
+    if let Some(overlay_window) = app_handle.get_webview_window("speaking_overlay") {
+        let _ = overlay_window.emit("overlay-progress", (done, total));
+    }
+}
+
 /// Shows the speaking overlay window with the spoken text.
 pub fn show_speaking_overlay(app_handle: &AppHandle, text: Option<String>) {
     show_overlay_state(app_handle, "speaking", text);

@@ -398,7 +398,14 @@
       "transcribe": "Automatisch abschreiben",
       "transcribing": "Schreibe ab…",
       "saveSample": "Probe speichern",
-      "sampleTrimmed": "gekürzt {{from}} s → {{to}} s"
+      "sampleTrimmed": "gekürzt {{from}} s → {{to}} s",
+      "playbackMode": "Wiedergabe",
+      "playbackModeDescription": "Wann das Vorlesen beginnt. Ohne Pausen: wartet, bis genug Audio vorgerechnet ist, dass die Wiedergabe das Modell nie einholt, und liest dann durch. Ganzer Text: rechnet erst alles.",
+      "playbackModes": {
+        "stream": "Sofort (Pausen möglich)",
+        "buffered": "Ohne Pausen (empfohlen)",
+        "complete": "Erst ganzer Text"
+      }
     }
   },
   "footer": {
@@ -453,6 +460,7 @@
   "overlay": {
     "speaking": "Speaking...",
     "processing": "Verarbeite...",
-    "reading": "Reading:"
+    "reading": "Reading:",
+    "rendering": "Rechne {{done}} / {{total}}"
   }
 }

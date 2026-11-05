@@ -398,7 +398,14 @@
       "transcribe": "Transcribe automatically",
       "transcribing": "Transcribing…",
       "saveSample": "Save sample",
-      "sampleTrimmed": "cut {{from}} s → {{to}} s"
+      "sampleTrimmed": "cut {{from}} s → {{to}} s",
+      "playbackMode": "Playback",
+      "playbackModeDescription": "When reading starts. Without gaps: waits until the buffered audio is long enough that playback never catches up with the model, then plays through. Whole text: renders everything first.",
+      "playbackModes": {
+        "stream": "Immediately (gaps possible)",
+        "buffered": "Without gaps (recommended)",
+        "complete": "Whole text first"
+      }
     }
   },
   "footer": {
@@ -453,6 +460,7 @@
   "overlay": {
     "speaking": "Hablando...",
     "processing": "Procesando...",
-    "reading": "Reading:"
+    "reading": "Reading:",
+    "rendering": "Rendering {{done}} / {{total}}"
   }
 }

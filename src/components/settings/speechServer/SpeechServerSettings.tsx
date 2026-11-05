@@ -16,6 +16,7 @@ import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Input } from "../../ui/Input";
 import { Textarea } from "../../ui/Textarea";
 import { Button } from "../../ui/Button";
+import { useSettings } from "../../../hooks/useSettings";
 
 const CLONE_PREFIX = "clone:";
 const AUDIO_EXTENSIONS = ["wav", "mp3", "m4a", "aiff", "aif", "flac", "caf", "aac"];
@@ -75,6 +76,8 @@ const fileNameStem = (path: string): string => {
 
 export const SpeechServerSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const playbackMode = getSetting("tts_playback_mode") ?? "buffered";
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<ServerConfigView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -282,6 +285,23 @@ export const SpeechServerSettings: React.FC = () => {
                 selectedValue={config.lang_code}
                 onSelect={(code) => run(() => commands.setServerLanguage(code))}
                 disabled={busy}
+              />
+            </SettingContainer>
+            <SettingContainer
+              title={t("settings.speechServer.playbackMode")}
+              description={t("settings.speechServer.playbackModeDescription")}
+              grouped
+            >
+              <Dropdown
+                options={(["stream", "buffered", "complete"] as const).map((mode) => ({
+                  value: mode,
+                  label: t(`settings.speechServer.playbackModes.${mode}`),
+                }))}
+                selectedValue={playbackMode}
+                onSelect={(mode) =>
+                  updateSetting("tts_playback_mode", mode as "stream" | "buffered" | "complete")
+                }
+                disabled={isUpdating("tts_playback_mode")}
               />
             </SettingContainer>
             <SettingContainer
