@@ -120,15 +120,17 @@ fn is_list_line(line: &str) -> bool {
 /// - every non-empty line ends with terminal punctuation, so list items,
 ///   headings, table rows and single-line paragraphs get their pause even
 ///   when the source had no period (web pages rarely do);
-/// - dashes used as pauses (" - ", " – ", " — ", "--") become a period;
-///   hyphens inside words ("Herz-Kreislauf") and number ranges stay.
+/// Dashes and commas inside a line are left exactly as written: the user
+/// asked for the text to reach the model unchanged (2026-11-06). Only a
+/// comma or dash at the very END of a line is replaced by the period,
+/// because that is a cut-off sentence or list item.
 fn clarify_pauses(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
     for (index, line) in text.lines().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        let mut line = replace_pause_dashes(line.trim());
+        let mut line = line.trim().to_string();
         if line.is_empty() {
             continue;
         }
@@ -154,46 +156,6 @@ fn clarify_pauses(text: &str) -> String {
         out.push_str(&line);
     }
     out
-}
-
-/// Turns dashes that stand for a pause into sentence breaks.
-fn replace_pause_dashes(line: &str) -> String {
-    let chars: Vec<char> = line.chars().collect();
-    let mut out = String::with_capacity(line.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        let prev = if i == 0 { None } else { Some(chars[i - 1]) };
-        let is_dash = matches!(c, '-' | '–' | '—');
-        // "--" (two hyphens) counts as one long dash.
-        let run_end = if c == '-' && chars.get(i + 1) == Some(&'-') { i + 2 } else { i + 1 };
-        let next = chars.get(run_end).copied();
-        let spaced = prev.map_or(true, char::is_whitespace) && next.map_or(true, char::is_whitespace);
-        let long_dash = matches!(c, '—') || run_end == i + 2;
-        // An en dash between digits is a range ("1990–2000"): keep it.
-        let digit_range = c == '–'
-            && prev.map_or(false, |p| p.is_ascii_digit())
-            && next.map_or(false, |n| n.is_ascii_digit());
-        if is_dash && !digit_range && (spaced || long_dash) {
-            // Drop the space before the dash, end the sentence, and
-            // capitalise nothing: models read lower-case starts fine.
-            out.truncate(out.trim_end().len());
-            if !out.is_empty() && !out.ends_with(|ch: char| matches!(ch, '.' | '!' | '?' | ':' | ';')) {
-                out.push('.');
-            }
-            if !out.is_empty() {
-                out.push(' ');
-            }
-            i = run_end;
-            while i < chars.len() && chars[i].is_whitespace() {
-                i += 1;
-            }
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    out.trim().to_string()
 }
 
 #[derive(Default)]
@@ -823,14 +785,23 @@ fn main() {
     }
 
     #[test]
-    fn pause_dashes_become_periods_but_word_hyphens_stay() {
+    fn dashes_and_commas_inside_a_line_stay_as_written() {
         let spoken = normalize_text_for_tts(
-            "Das Ergebnis – überraschend – war klar. Herz-Kreislauf bleibt. Zahlen 1990–2000 auch. Ende -- wirklich",
+            "Das Ergebnis – überraschend – war klar, ja. Herz-Kreislauf bleibt. Zahlen 1990–2000 auch. Ende -- wirklich",
         );
-        assert!(spoken.contains("Das Ergebnis. überraschend. war klar."), "{spoken}");
+        assert!(spoken.contains("Das Ergebnis – überraschend – war klar, ja."), "{spoken}");
         assert!(spoken.contains("Herz-Kreislauf bleibt."), "{spoken}");
         assert!(spoken.contains("1990–2000"), "{spoken}");
-        assert!(spoken.contains("Ende. wirklich."), "{spoken}");
+        // The Markdown reader itself typesets "--" as an en dash.
+        assert!(spoken.contains("Ende – wirklich."), "{spoken}");
+    }
+
+    #[test]
+    fn a_comma_or_dash_at_the_end_of_a_line_becomes_a_period() {
+        let spoken = normalize_text_for_tts("Erster Teil,\n\nZweiter Teil –\n\nDritter Teil");
+        assert!(spoken.contains("Erster Teil."), "{spoken}");
+        assert!(spoken.contains("Zweiter Teil."), "{spoken}");
+        assert!(spoken.contains("Dritter Teil."), "{spoken}");
     }
 
     #[test]
@@ -866,8 +837,7 @@ fn main() {
 "#;
 
         let spoken = normalize_text_for_tts(markdown);
-        // A spaced dash is a pause and becomes a sentence break.
-        assert!(spoken.contains("AT&T uses smart quotes: ’hello’ and. dash."), "{spoken}");
+        assert!(spoken.contains("AT&T uses smart quotes: ’hello’ and — dash."), "{spoken}");
     }
 
     #[test]
