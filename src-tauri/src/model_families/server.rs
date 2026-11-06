@@ -501,6 +501,11 @@ impl ServerEngine {
     ///    disk -> the anchor (steady speaker across sentences).
     /// 4. Otherwise none: the bare voice name is sent.
     fn resolve_reference(&self, entry: &ModelEntry, voice: &str) -> Result<Option<CloneRef>, String> {
+        // LFM3-Audio has two fixed voices (female, male) and no cloning:
+        // never send a reference clip to it.
+        if entry.engine_kind == "lfm" {
+            return Ok(None);
+        }
         if let Some(name) = voice.strip_prefix(CLONE_VOICE_PREFIX) {
             let clone = self
                 .config
@@ -568,14 +573,18 @@ impl SpeechEngine for ServerEngine {
             Some(entry) => entry.clones.keys().cloned().collect(),
             None => Vec::new(),
         };
-        let mut samples: Vec<String> = self
-            .config
-            .clones
-            .keys()
-            .map(|name| format!("{CLONE_VOICE_PREFIX}{name}"))
-            .collect();
-        samples.sort();
-        voices.extend(samples);
+        // Voice samples only exist for models that can clone a voice.
+        let can_clone = self.active_entry().map_or(true, |e| e.engine_kind != "lfm");
+        if can_clone {
+            let mut samples: Vec<String> = self
+                .config
+                .clones
+                .keys()
+                .map(|name| format!("{CLONE_VOICE_PREFIX}{name}"))
+                .collect();
+            samples.sort();
+            voices.extend(samples);
+        }
         voices
     }
 
@@ -680,6 +689,28 @@ mod tests {
             return; // dev machine: skip
         }
         assert!(list_server_models().is_empty());
+    }
+
+    #[test]
+    fn lfm_models_never_get_a_reference_clip() {
+        // Built from JSON, the way the app reads ~/ttsd/server.yaml.
+        let config: ServerConfig = serde_json::from_value(serde_json::json!({
+            "clones": { "mine": { "ref_audio": "/tmp/none.wav", "ref_text": "x" } }
+        }))
+        .unwrap();
+        let entry: ModelEntry = serde_json::from_value(serde_json::json!({
+            "id": "lfm", "repo": "LiquidAI/LFM3-Audio-2B-MLX-4bit", "alias": "LFM",
+            "engine_kind": "lfm", "voices": ["female", "male"]
+        }))
+        .unwrap();
+        let engine = ServerEngine {
+            client: Client::new(),
+            base_url: String::new(),
+            selected_repo: None,
+            config,
+        };
+        assert!(engine.resolve_reference(&entry, "clone:mine").unwrap().is_none());
+        assert!(engine.resolve_reference(&entry, "female").unwrap().is_none());
     }
 
     #[test]

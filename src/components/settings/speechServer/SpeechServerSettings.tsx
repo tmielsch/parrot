@@ -146,6 +146,8 @@ export const SpeechServerSettings: React.FC = () => {
             .filter((c) => !c.missing)
             .map((c) => ({ value: c.name, label: c.name }))
         : activeModel.voices.map((v) => ({ value: v, label: v }));
+    // LFM3-Audio has two fixed voices and cannot clone a voice sample.
+    if (activeModel.engine_kind === "lfm") return builtIn;
     const samples = usableSamples.map((s) => ({
       value: `${CLONE_PREFIX}${s.name}`,
       label: t("settings.speechServer.sampleVoiceLabel", { name: s.name }),
@@ -383,7 +385,7 @@ export const SpeechServerSettings: React.FC = () => {
                 </Button>
               </div>
             </SettingContainer>
-            {activeModel.engine_kind !== "chatterbox" && (
+            {activeModel.engine_kind !== "chatterbox" && activeModel.engine_kind !== "lfm" && (
               <ToggleSwitch
                 label={t("settings.speechServer.lockVoice")}
                 description={t("settings.speechServer.lockVoiceDescription")}
